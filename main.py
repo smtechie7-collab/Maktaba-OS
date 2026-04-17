@@ -5,6 +5,7 @@ import logging
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
 from src.audio.processor import AudioProcessor
+from src.ui.dashboard import main as launch_gui
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -40,6 +41,9 @@ def main():
     audio_parser.add_argument("--input", nargs="+", required=True, help="List of input audio files")
     audio_parser.add_argument("--output", type=str, required=True, help="Output merged audio path")
 
+    # Command: gui
+    subparsers.add_parser("gui", help="Launch the Maktaba-OS Dashboard")
+
     args = parser.parse_args()
 
     db = DatabaseManager("maktaba_production.db")
@@ -55,6 +59,9 @@ def main():
     elif args.command == "process-audio":
         processor = AudioProcessor()
         processor.process_chapters(args.input, args.output)
+
+    elif args.command == "gui":
+        launch_gui()
 
     else:
         parser.print_help()

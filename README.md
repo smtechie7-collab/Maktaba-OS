@@ -59,6 +59,10 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
      ```bash
      python main.py process-audio --input file1.mp3 file2.mp3 --output output/final.mp3
      ```
+   - **Launch GUI Dashboard**:
+     ```bash
+     python main.py gui
+     ```
 
 ## 📜 License
 MIT License - See [LICENSE](LICENSE) for details.
