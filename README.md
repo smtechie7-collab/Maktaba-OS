@@ -41,13 +41,24 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
    - Ensure `ffmpeg` and `ffprobe` are in your System PATH.
    
 3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Setup database and ingest sample data:
-   ```bash
-   python src/data/ingest_sample.py
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
+ 4. **Run the CLI Tool**:
+   Maktaba-OS comes with a master CLI to manage your publishing tasks.
+   
+   - **List Books**:
+     ```bash
+     python main.py list
+     ```
+   - **Export PDF**:
+     ```bash
+     python main.py export-pdf --id 1 --output output/my_book.pdf
+     ```
+   - **Process Audio**:
+     ```bash
+     python main.py process-audio --input file1.mp3 file2.mp3 --output output/final.mp3
+     ```
 
 ## 📜 License
 MIT License - See [LICENSE](LICENSE) for details.
