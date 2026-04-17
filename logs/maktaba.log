@@ -8,3 +8,17 @@
 2026-04-17 12:44:25,883 - Database - INFO - Database initialization complete.
 2026-04-17 12:44:26,229 - Database - INFO - Initializing database at maktaba_production.db
 2026-04-17 12:44:26,233 - Database - INFO - Database initialization complete.
+2026-04-17 12:46:48,800 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:46:48,821 - Database - INFO - Database initialization complete.
+2026-04-17 12:46:58,519 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:46:58,522 - Database - INFO - Database initialization complete.
+2026-04-17 12:46:58,530 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:46:58,532 - Database - INFO - Database initialization complete.
+2026-04-17 12:46:58,532 - PDFGenerator - INFO - Starting PDF generation for Book ID: 2
+2026-04-17 12:46:59,504 - PDFGenerator - INFO - PDF successfully generated at: output/book_with_footnotes.pdf
+2026-04-17 12:47:23,652 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:47:23,654 - Database - INFO - Database initialization complete.
+2026-04-17 12:47:23,670 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:47:23,672 - Database - INFO - Database initialization complete.
+2026-04-17 12:47:23,673 - PDFGenerator - INFO - Starting PDF generation for Book ID: 2
+2026-04-17 12:47:24,863 - PDFGenerator - INFO - PDF successfully generated at: output/book_with_toc.pdf

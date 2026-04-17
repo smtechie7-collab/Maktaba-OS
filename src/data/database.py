@@ -64,6 +64,17 @@ class DatabaseManager:
                     FOREIGN KEY (chapter_id) REFERENCES Chapters (id) ON DELETE CASCADE
                 )
             ''')
+
+            # 4. Footnotes Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS Footnotes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    block_id INTEGER,
+                    marker TEXT,              -- e.g., "1", "*", "a"
+                    content JSON NOT NULL,    -- Multilingual footnote content
+                    FOREIGN KEY (block_id) REFERENCES Content_Blocks (id) ON DELETE CASCADE
+                )
+            ''')
             
             conn.commit()
         logger.info("Database initialization complete.")
@@ -98,19 +109,53 @@ class DatabaseManager:
             )
             return cursor.lastrowid
 
-    def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
-        """Fetch all chapters and content for a specific book."""
+    def add_footnote(self, block_id: int, content: Dict[str, Any], marker: str = None) -> int:
+        """Add a footnote linked to a content block."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Footnotes (block_id, marker, content) VALUES (?, ?, ?)",
+                (block_id, marker, json.dumps(content))
+            )
+            return cursor.lastrowid
+
+    def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
+        """Fetch all chapters and content for a specific book including footnotes."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Fetch Chapters and Blocks
             query = '''
-                SELECT c.title as chapter_title, cb.content_data, cb.content_type
+                SELECT c.id as chapter_id, c.title as chapter_title, 
+                       cb.id as block_id, cb.content_data, cb.content_type
                 FROM Chapters c
                 JOIN Content_Blocks cb ON c.id = cb.chapter_id
                 WHERE c.book_id = ? AND cb.is_active = 1
                 ORDER BY c.sequence_number ASC, cb.id ASC
             '''
             cursor.execute(query, (book_id,))
-            return [dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                block = dict(row)
+                
+                # 2. Fetch Footnotes for each block
+                cursor.execute(
+                    "SELECT marker, content FROM Footnotes WHERE block_id = ?", 
+                    (block['block_id'],)
+                )
+                footnotes = []
+                for fn in cursor.fetchall():
+                    footnotes.append({
+                        "marker": fn['marker'],
+                        "content": json.loads(fn['content'])
+                    })
+                
+                block['footnotes'] = footnotes
+                results.append(block)
+                
+            return results
 
 if __name__ == "__main__":
     # Test initialization

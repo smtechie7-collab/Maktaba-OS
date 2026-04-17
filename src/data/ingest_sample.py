@@ -30,12 +30,20 @@ def ingest_sample_data():
         # 3. Add Content Blocks (Arabic + Urdu + English)
         if chap["seq"] == 1:
             # Sample for Ikhlas
-            db.add_content_block(chap_id, {
+            block_id = db.add_content_block(chap_id, {
                 "ar": "إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ",
                 "ur": "اعمال کا دارومدار نیتوں پر ہے۔",
                 "en": "Actions are but by intentions.",
                 "reference": "Sahih al-Bukhari 1"
             })
+            
+            # Add a footnote to this block
+            db.add_footnote(block_id, {
+                "ar": "هذا حديث عظيم وقاعدة من قواعد الإسلام",
+                "ur": "یہ ایک عظیم حدیث ہے اور اسلام کے قواعد میں سے ایک قاعدہ ہے۔",
+                "en": "This is a great Hadith and one of the foundations of Islam."
+            })
+
             db.add_content_block(chap_id, {
                 "ar": "وإِنَّمَا لِكُلِّ امْرِئٍ مَا نَوَى",
                 "ur": "اور ہر شخص کے لیے وہی ہے جس کی اس نے نیت کی۔",

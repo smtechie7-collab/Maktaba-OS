@@ -31,24 +31,27 @@ class PDFGenerator:
                 logger.error(f"Book with ID {book_id} not found.")
                 return
 
-        # 2. Fetch content
-        # We group blocks by chapter for the template
-        chapters_data = []
-        cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (book_id,))
-        chapters = cursor.fetchall()
+        # 2. Fetch content using the centralized DatabaseManager method
+        content_blocks = self.db.get_book_content(book_id)
         
-        for chap in chapters:
-            cursor.execute("SELECT content_data, content_type FROM Content_Blocks WHERE chapter_id = ? AND is_active = 1", (chap['id'],))
-            blocks = []
-            for b in cursor.fetchall():
-                blocks.append({
-                    "content_data": json.loads(b['content_data']),
-                    "content_type": b['content_type']
-                })
+        # Group blocks by chapter for the template
+        chapters_data = []
+        current_chapter_id = None
+        current_chapter_dict = None
+        
+        for block in content_blocks:
+            if block['chapter_id'] != current_chapter_id:
+                current_chapter_id = block['chapter_id']
+                current_chapter_dict = {
+                    "chapter_title": block['chapter_title'],
+                    "blocks": []
+                }
+                chapters_data.append(current_chapter_dict)
             
-            chapters_data.append({
-                "chapter_title": chap['title'],
-                "blocks": blocks
+            current_chapter_dict['blocks'].append({
+                "content_data": json.loads(block['content_data']),
+                "content_type": block['content_type'],
+                "footnotes": block['footnotes']
             })
 
         # 3. Render HTML

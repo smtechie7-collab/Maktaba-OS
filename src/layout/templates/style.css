@@ -39,6 +39,48 @@ body {
     color: #444;
 }
 
+/* Table of Contents */
+#toc {
+    page-break-after: always;
+}
+
+.toc-header {
+    font-size: 24pt;
+    margin-bottom: 20pt;
+    text-align: center;
+}
+
+#toc ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+#toc li {
+    margin-bottom: 10pt;
+    font-size: 14pt;
+}
+
+#toc a {
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    justify-content: space-between;
+}
+
+#toc a::after {
+    content: target-counter(attr(href), page);
+    margin-left: auto;
+}
+
+#toc a::before {
+    content: target-text(attr(href));
+}
+
+/* Leader dots for ToC */
+#toc li a::after {
+    content: leader(dotted) " " target-counter(attr(href), page);
+}
+
 .chapter {
     page-break-before: always;
 }
@@ -79,4 +121,32 @@ body {
     font-size: 9pt;
     color: #888;
     text-align: left;
+}
+
+/* Footnotes Styling (WeasyPrint/Paged Media) */
+.footnote {
+    float: footnote;
+    font-size: 10pt;
+    line-height: 1.4;
+    text-align: right;
+    font-family: 'Amiri', serif;
+}
+
+@footnote {
+    border-top: 1pt solid #ccc;
+    padding-top: 5mm;
+    margin-top: 5mm;
+}
+
+::footnote-marker {
+    font-weight: bold;
+    margin-right: 5pt;
+    color: #3d5afe;
+}
+
+::footnote-call {
+    font-size: 70%;
+    vertical-align: super;
+    line-height: 0;
+    color: #3d5afe;
 }

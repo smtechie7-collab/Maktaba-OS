@@ -11,18 +11,41 @@
         <h2 class="book-author">{{ author }}</h2>
     </div>
 
+    <div id="toc">
+        <h2 class="toc-header">Table of Contents</h2>
+        <ul>
+            {% for chapter in chapters %}
+            <li>
+                <a href="#chapter-{{ loop.index }}">
+                    {{ chapter.chapter_title }}
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
     {% for chapter in chapters %}
-    <div class="chapter">
+    <div class="chapter" id="chapter-{{ loop.index }}">
         <h2 class="chapter-title">{{ chapter.chapter_title }}</h2>
         
         {% for block in chapter.blocks %}
         <div class="content-block {{ block.content_type }}">
             {% if block.content_data.ar %}
-            <p class="arabic">{{ block.content_data.ar }}</p>
+            <p class="arabic">
+                {{ block.content_data.ar }}
+                {% for fn in block.footnotes %}
+                <span class="footnote">{{ fn.content.ar }}</span>
+                {% endfor %}
+            </p>
             {% endif %}
             
             {% if block.content_data.ur %}
-            <p class="urdu">{{ block.content_data.ur }}</p>
+            <p class="urdu">
+                {{ block.content_data.ur }}
+                {% for fn in block.footnotes %}
+                <span class="footnote">{{ fn.content.ur }}</span>
+                {% endfor %}
+            </p>
             {% endif %}
             
             {% if block.content_data.en %}

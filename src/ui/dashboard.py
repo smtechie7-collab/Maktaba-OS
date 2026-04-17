@@ -2,7 +2,7 @@ import sys
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
-                             QMessageBox, QFrame)
+                             QMessageBox, QFrame, QLineEdit)
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QIcon
 
@@ -45,6 +45,13 @@ class MaktabaDashboard(QMainWindow):
             QPushButton#primaryBtn { background-color: #3d5afe; }
             QPushButton#primaryBtn:hover { background-color: #536dfe; }
             QLabel#header { font-size: 24px; font-weight: bold; color: #3d5afe; margin-bottom: 20px; }
+            QLineEdit { 
+                background-color: #1e1e1e; 
+                border: 1px solid #333; 
+                padding: 8px; 
+                border-radius: 5px; 
+                margin-bottom: 10px;
+            }
         """)
 
         # Main Layout
@@ -58,38 +65,79 @@ class MaktabaDashboard(QMainWindow):
         header_label.setObjectName("header")
         sidebar.addWidget(header_label)
 
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search books...")
+        self.search_bar.textChanged.connect(self.load_books)
+        sidebar.addWidget(self.search_bar)
+
         self.book_list = QListWidget()
+        self.book_list.itemSelectionChanged.connect(self.handle_selection_change)
         self.load_books()
         sidebar.addWidget(self.book_list)
         
-        main_layout.addLayout(sidebar, 2)
+        main_layout.addLayout(sidebar, 1)
 
-        # Right Panel (Actions)
-        actions_panel = QVBoxLayout()
-        actions_panel.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Right Panel (Details & Actions)
+        right_panel = QVBoxLayout()
         
+        # Metadata Section
+        self.metadata_label = QLabel("Book Details")
+        self.metadata_label.setObjectName("header")
+        right_panel.addWidget(self.metadata_label)
+
+        self.details_area = QLabel("Select a book to see details")
+        self.details_area.setWordWrap(True)
+        self.details_area.setStyleSheet("background-color: #1e1e1e; padding: 15px; border-radius: 5px; border: 1px solid #333;")
+        right_panel.addWidget(self.details_area)
+
+        right_panel.addSpacing(20)
+
+        # Actions Section
         actions_label = QLabel("Actions")
         actions_label.setObjectName("header")
-        actions_panel.addWidget(actions_label)
+        right_panel.addWidget(actions_label)
 
         self.gen_pdf_btn = QPushButton("Generate PDF")
         self.gen_pdf_btn.setObjectName("primaryBtn")
         self.gen_pdf_btn.clicked.connect(self.handle_pdf_generation)
-        actions_panel.addWidget(self.gen_pdf_btn)
+        right_panel.addWidget(self.gen_pdf_btn)
 
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.load_books)
-        actions_panel.addWidget(self.refresh_btn)
+        right_panel.addWidget(self.refresh_btn)
 
-        main_layout.addLayout(actions_panel, 1)
+        right_panel.addStretch()
+        main_layout.addLayout(right_panel, 2)
 
     def load_books(self):
+        search_query = self.search_bar.text().lower()
         self.book_list.clear()
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, title FROM Books")
+            cursor.execute("SELECT id, title, author FROM Books")
             for row in cursor.fetchall():
-                self.book_list.addItem(f"{row['id']} - {row['title']}")
+                display_text = f"{row['id']} - {row['title']}"
+                if search_query in display_text.lower() or search_query in row['author'].lower():
+                    self.book_list.addItem(display_text)
+
+    def handle_selection_change(self):
+        selected = self.book_list.currentItem()
+        if not selected:
+            self.details_area.setText("Select a book to see details")
+            return
+
+        book_id = int(selected.text().split(" - ")[0])
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM Books WHERE id = ?", (book_id,))
+            book = cursor.fetchone()
+            
+            metadata_str = f"<b>Title:</b> {book['title']}<br>"
+            metadata_str += f"<b>Author:</b> {book['author']}<br>"
+            metadata_str += f"<b>Language:</b> {book['language']}<br>"
+            metadata_str += f"<b>Created:</b> {book['created_at']}<br>"
+            
+            self.details_area.setText(metadata_str)
 
     def handle_pdf_generation(self):
         selected = self.book_list.currentItem()
