@@ -1,0 +1,43 @@
+# Maktaba-OS 📚
+**Production-grade Islamic Digital Publishing Engine**
+
+Maktaba-OS is a high-quality typesetting and audio processing engine designed for multi-lingual Islamic literature (Arabic, Urdu, Gujarati, English, etc.). It follows a modular architecture to convert structured data from SQLite into professional-grade PDFs and processed audio.
+
+## 🚀 Features
+- **Hybrid Data Layer**: SQLite + JSON for flexible and versioned content storage.
+- **Professional Typesetting**: WeasyPrint with Pango for perfect Arabic/Urdu RTL support and ligatures.
+- **High-Quality PDF**: 300 DPI CMYK output with bleed and margins for professional printing.
+- **Audio Pipeline**: Automated volume normalization (-16 LUFS) and crossfades using FFmpeg.
+- **Modern Dashboard**: (Upcoming) PyQt6-based management interface.
+
+## 🏛 Project Governance
+This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.md). All contributors (including AI agents) must adhere to the core commandments:
+1. **Preserve Data Sacredness**: Never delete raw data; always version.
+2. **RTL First**: Arabic/Urdu support is the foundation.
+3. **Surgical Precision**: Minimal, non-destructive code edits.
+
+## 🛠 Tech Stack
+- **Language**: Python 3.9+
+- **Database**: SQLite
+- **Layout**: WeasyPrint (Cairo/Pango)
+- **Audio**: Pydub + FFmpeg
+- **UI**: PyQt6
+
+## 📂 Structure
+- `src/data`: Database schemas and ingestion logic.
+- `src/layout`: HTML/CSS templates and PDF generation wrapper.
+- `src/audio`: Audio processing scripts.
+- `assets/`: Fonts and static resources.
+
+## 🚦 Getting Started
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Setup database and ingest sample data:
+   ```bash
+   python src/data/ingest_sample.py
+   ```
+
+## 📜 License
+MIT License - See [LICENSE](LICENSE) for details.
