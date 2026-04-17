@@ -3,7 +3,7 @@ import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
                              QMessageBox, QFrame, QLineEdit, QDialog, QFormLayout,
-                             QComboBox)
+                             QComboBox, QTextEdit, QSpinBox)
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
 
@@ -59,6 +59,82 @@ class BookDialog(QDialog):
             "title": self.title_input.text(),
             "author": self.author_input.text(),
             "language": self.lang_input.currentText().lower()[:2] if self.lang_input.currentText() != "Multilingual" else "multi"
+        }
+
+class ChapterDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add New Chapter")
+        self.setMinimumWidth(400)
+        self.layout = QFormLayout(self)
+
+        self.title_input = QLineEdit()
+        self.seq_input = QSpinBox()
+        self.seq_input.setMinimum(1)
+        self.seq_input.setMaximum(1000)
+
+        self.layout.addRow("Chapter Title:", self.title_input)
+        self.layout.addRow("Sequence Number:", self.seq_input)
+
+        self.buttons = QHBoxLayout()
+        self.save_btn = QPushButton("Save Chapter")
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        self.buttons.addWidget(self.save_btn)
+        self.buttons.addWidget(self.cancel_btn)
+        self.layout.addRow(self.buttons)
+
+    def get_data(self):
+        return {
+            "title": self.title_input.text(),
+            "sequence": self.seq_input.value()
+        }
+
+class ContentBlockDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Content Block")
+        self.setMinimumWidth(500)
+        self.layout = QFormLayout(self)
+
+        self.ar_input = QTextEdit()
+        self.ar_input.setPlaceholderText("Arabic text here...")
+        self.ar_input.setMaximumHeight(100)
+        
+        self.ur_input = QTextEdit()
+        self.ur_input.setPlaceholderText("Urdu translation here...")
+        self.ur_input.setMaximumHeight(100)
+        
+        self.en_input = QTextEdit()
+        self.en_input.setPlaceholderText("English translation here...")
+        self.en_input.setMaximumHeight(100)
+        
+        self.ref_input = QLineEdit()
+        self.ref_input.setPlaceholderText("e.g. Bukhari 123")
+
+        self.layout.addRow("Arabic Text:", self.ar_input)
+        self.layout.addRow("Urdu Text:", self.ur_input)
+        self.layout.addRow("English Text:", self.en_input)
+        self.layout.addRow("Reference:", self.ref_input)
+
+        self.buttons = QHBoxLayout()
+        self.save_btn = QPushButton("Save Block")
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        self.buttons.addWidget(self.save_btn)
+        self.buttons.addWidget(self.cancel_btn)
+        self.layout.addRow(self.buttons)
+
+    def get_data(self):
+        return {
+            "ar": self.ar_input.toPlainText().strip(),
+            "ur": self.ur_input.toPlainText().strip(),
+            "en": self.en_input.toPlainText().strip(),
+            "reference": self.ref_input.text().strip()
         }
 
 class MaktabaDashboard(QMainWindow):
@@ -157,6 +233,14 @@ class MaktabaDashboard(QMainWindow):
         self.gen_pdf_btn.clicked.connect(self.handle_pdf_generation)
         right_panel.addWidget(self.gen_pdf_btn)
 
+        self.add_chapter_btn = QPushButton("+ Add Chapter")
+        self.add_chapter_btn.clicked.connect(self.show_add_chapter_dialog)
+        right_panel.addWidget(self.add_chapter_btn)
+
+        self.add_content_btn = QPushButton("+ Add Content Block")
+        self.add_content_btn.clicked.connect(self.show_add_content_dialog)
+        right_panel.addWidget(self.add_content_btn)
+
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.load_books)
         right_panel.addWidget(self.refresh_btn)
@@ -191,6 +275,66 @@ class MaktabaDashboard(QMainWindow):
                 QMessageBox.information(self, "Success", f"Book '{data['title']}' added successfully!")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to add book: {str(e)}")
+
+    def show_add_chapter_dialog(self):
+        selected = self.book_list.currentItem()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Please select a book first!")
+            return
+
+        book_id = int(selected.text().split(" - ")[0])
+        dialog = ChapterDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            if not data['title']:
+                QMessageBox.warning(self, "Validation Error", "Chapter title is required!")
+                return
+            
+            try:
+                self.db.add_chapter(book_id, data['title'], data['sequence'])
+                QMessageBox.information(self, "Success", f"Chapter '{data['title']}' added successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to add chapter: {str(e)}")
+
+    def show_add_content_dialog(self):
+        selected = self.book_list.currentItem()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Please select a book first!")
+            return
+
+        book_id = int(selected.text().split(" - ")[0])
+        
+        # We need to know which chapter to add content to. 
+        # For simplicity, we'll fetch the latest chapter or ask the user.
+        # Let's fetch available chapters for this book.
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (book_id,))
+            chapters = cursor.fetchall()
+            
+        if not chapters:
+            QMessageBox.warning(self, "No Chapters", "Please create a chapter first!")
+            return
+
+        # Simple chapter selection dialog
+        items = [f"{c['id']} - {c['title']}" for c in chapters]
+        from PyQt6.QtWidgets import QInputDialog
+        item, ok = QInputDialog.getItem(self, "Select Chapter", "Add content to:", items, 0, False)
+        
+        if ok and item:
+            chapter_id = int(item.split(" - ")[0])
+            dialog = ContentBlockDialog(self)
+            if dialog.exec():
+                data = dialog.get_data()
+                if not any([data['ar'], data['ur'], data['en']]):
+                    QMessageBox.warning(self, "Validation Error", "At least one text field is required!")
+                    return
+                
+                try:
+                    self.db.add_content_block(chapter_id, data)
+                    QMessageBox.information(self, "Success", "Content block added successfully!")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add content: {str(e)}")
 
     def handle_selection_change(self):
         selected = self.book_list.currentItem()
