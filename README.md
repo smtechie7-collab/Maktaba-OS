@@ -34,8 +34,13 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
    WeasyPrint requires the GTK+ runtime for Cairo and Pango. 
    - Download the latest GTK3 installer from [Gtk-for-Windows](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases).
    - Add the `bin` folder to your System PATH.
+
+2. **FFmpeg (For Audio)**:
+   Audio processing requires FFmpeg.
+   - Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) or via `choco install ffmpeg`.
+   - Ensure `ffmpeg` and `ffprobe` are in your System PATH.
    
-2. Install dependencies:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
