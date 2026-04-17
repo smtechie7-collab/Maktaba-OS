@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ book_title }}</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="front-page">
+        <h1 class="book-title">{{ book_title }}</h1>
+        <h2 class="book-author">{{ author }}</h2>
+    </div>
+
+    {% for chapter in chapters %}
+    <div class="chapter">
+        <h2 class="chapter-title">{{ chapter.chapter_title }}</h2>
+        
+        {% for block in chapter.blocks %}
+        <div class="content-block {{ block.content_type }}">
+            {% if block.content_data.ar %}
+            <p class="arabic">{{ block.content_data.ar }}</p>
+            {% endif %}
+            
+            {% if block.content_data.ur %}
+            <p class="urdu">{{ block.content_data.ur }}</p>
+            {% endif %}
+            
+            {% if block.content_data.en %}
+            <p class="english">{{ block.content_data.en }}</p>
+            {% endif %}
+
+            {% if block.content_data.reference %}
+            <p class="reference">[{{ block.content_data.reference }}]</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</body>
+</html>

@@ -1,0 +1,82 @@
+@page {
+    size: A5;
+    margin: 20mm;
+    @bottom-center {
+        content: counter(page);
+        font-family: serif;
+    }
+}
+
+body {
+    font-family: 'Amiri', 'serif';
+    line-height: 1.8;
+    text-align: justify;
+    color: #1a1a1a;
+}
+
+/* RTL Support */
+[dir="rtl"] {
+    text-align: right;
+}
+
+.front-page {
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    text-align: center;
+}
+
+.book-title {
+    font-size: 36pt;
+    margin-bottom: 10pt;
+}
+
+.book-author {
+    font-size: 18pt;
+    color: #444;
+}
+
+.chapter {
+    page-break-before: always;
+}
+
+.chapter-title {
+    font-size: 24pt;
+    border-bottom: 2pt solid #eee;
+    margin-bottom: 20pt;
+    color: #2c3e50;
+}
+
+.content-block {
+    margin-bottom: 25pt;
+}
+
+.arabic {
+    font-size: 20pt;
+    font-family: 'Amiri', serif;
+    color: #000;
+    margin-bottom: 5pt;
+}
+
+.urdu {
+    font-size: 18pt;
+    font-family: 'Jameel Noori Nastaliq', serif;
+    color: #333;
+    margin-bottom: 5pt;
+}
+
+.english {
+    font-size: 11pt;
+    font-family: sans-serif;
+    color: #666;
+    font-style: italic;
+}
+
+.reference {
+    font-size: 9pt;
+    color: #888;
+    text-align: left;
+}

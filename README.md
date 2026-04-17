@@ -30,7 +30,12 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
 - `assets/`: Fonts and static resources.
 
 ## 🚦 Getting Started
-1. Install dependencies:
+1. **System Dependencies (Windows)**:
+   WeasyPrint requires the GTK+ runtime for Cairo and Pango. 
+   - Download the latest GTK3 installer from [Gtk-for-Windows](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases).
+   - Add the `bin` folder to your System PATH.
+   
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
