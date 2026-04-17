@@ -41,10 +41,15 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
    - Ensure `ffmpeg` and `ffprobe` are in your System PATH.
    
 3. Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
- 4. **Run the CLI Tool**:
+     ```bash
+     pip install -r requirements.txt
+     ```
+4. **Setup Fonts**:
+   Download the required Arabic fonts (Amiri, etc.):
+   ```bash
+   python src/utils/font_setup.py
+   ```
+5. **Run the CLI Tool**:
    Maktaba-OS comes with a master CLI to manage your publishing tasks.
    
    - **List Books**:

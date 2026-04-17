@@ -1,12 +1,14 @@
 import sqlite3
 import json
-import logging
-from pathlib import Path
+import os
+import sys
 from typing import Dict, Any, List, Optional
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("Database")
+# Add root to path for imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.utils.logger import setup_logger
+
+logger = setup_logger("Database")
 
 class DatabaseManager:
     def __init__(self, db_path: str = "maktaba.db"):

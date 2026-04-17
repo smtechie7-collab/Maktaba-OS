@@ -1,17 +1,15 @@
 import os
 import sys
 import json
-import logging
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
-# Add parent directory to path to import data module
+# Add parent directory to path to import modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.data.database import DatabaseManager
+from src.utils.logger import setup_logger
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("PDFGenerator")
+logger = setup_logger("PDFGenerator")
 
 class PDFGenerator:
     def __init__(self, template_dir="src/layout/templates"):

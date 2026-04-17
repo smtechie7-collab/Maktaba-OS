@@ -1,12 +1,14 @@
 import os
-import logging
+import sys
 from pydub import AudioSegment
 from pydub.utils import mediainfo
 from typing import List, Optional
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("AudioProcessor")
+# Add root to path for imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.utils.logger import setup_logger
+
+logger = setup_logger("AudioProcessor")
 
 class AudioProcessor:
     def __init__(self, target_lufs: float = -16.0):
