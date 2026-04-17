@@ -22,3 +22,13 @@
 2026-04-17 12:47:23,672 - Database - INFO - Database initialization complete.
 2026-04-17 12:47:23,673 - PDFGenerator - INFO - Starting PDF generation for Book ID: 2
 2026-04-17 12:47:24,863 - PDFGenerator - INFO - PDF successfully generated at: output/book_with_toc.pdf
+2026-04-17 12:51:44,367 - Database - INFO - Initializing database at test_maktaba_suite.db
+2026-04-17 12:51:47,496 - Database - INFO - Database initialization complete.
+2026-04-17 12:51:48,164 - Database - INFO - Initializing database at test_maktaba_suite.db
+2026-04-17 12:51:49,297 - Database - INFO - Database initialization complete.
+2026-04-17 12:51:50,113 - Database - INFO - Initializing database at test_maktaba_suite.db
+2026-04-17 12:51:50,876 - Database - INFO - Database initialization complete.
+2026-04-17 12:51:51,617 - Database - INFO - Initializing database at test_maktaba_suite.db
+2026-04-17 12:51:52,293 - Database - INFO - Database initialization complete.
+2026-04-17 12:51:53,132 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:51:53,138 - Database - INFO - Database initialization complete.

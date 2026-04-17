@@ -12,10 +12,10 @@ from src.utils.logger import setup_logger
 logger = setup_logger("PDFGenerator")
 
 class PDFGenerator:
-    def __init__(self, template_dir="src/layout/templates"):
+    def __init__(self, template_dir="src/layout/templates", db_path="maktaba_production.db"):
         self.env = Environment(loader=FileSystemLoader(template_dir))
         self.template = self.env.get_template("book_template.html")
-        self.db = DatabaseManager("maktaba_production.db")
+        self.db = DatabaseManager(db_path)
 
     def generate_pdf(self, book_id: int, output_path: str):
         """Fetch book data and generate a PDF."""

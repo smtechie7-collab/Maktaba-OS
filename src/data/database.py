@@ -120,11 +120,11 @@ class DatabaseManager:
             return cursor.lastrowid
 
     def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
-        """Fetch all chapters and content for a specific book including footnotes."""
+        """Fetch all chapters and content for a specific book optimized to avoid N+1 queries."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
-            # 1. Fetch Chapters and Blocks
+            # 1. Fetch Chapters and Blocks in one go
             query = '''
                 SELECT c.id as chapter_id, c.title as chapter_title, 
                        cb.id as block_id, cb.content_data, cb.content_type
@@ -134,28 +134,33 @@ class DatabaseManager:
                 ORDER BY c.sequence_number ASC, cb.id ASC
             '''
             cursor.execute(query, (book_id,))
-            rows = cursor.fetchall()
+            blocks = [dict(row) for row in cursor.fetchall()]
             
-            results = []
-            for row in rows:
-                block = dict(row)
+            if not blocks:
+                return []
+
+            # 2. Fetch all Footnotes for all blocks in this book in ONE query
+            block_ids = [b['block_id'] for b in blocks]
+            placeholders = ', '.join(['?'] * len(block_ids))
+            fn_query = f"SELECT block_id, marker, content FROM Footnotes WHERE block_id IN ({placeholders})"
+            cursor.execute(fn_query, block_ids)
+            
+            # Map footnotes to their blocks
+            footnotes_map = {}
+            for fn in cursor.fetchall():
+                bid = fn['block_id']
+                if bid not in footnotes_map:
+                    footnotes_map[bid] = []
+                footnotes_map[bid].append({
+                    "marker": fn['marker'],
+                    "content": json.loads(fn['content'])
+                })
+            
+            # 3. Attach footnotes to blocks
+            for block in blocks:
+                block['footnotes'] = footnotes_map.get(block['block_id'], [])
                 
-                # 2. Fetch Footnotes for each block
-                cursor.execute(
-                    "SELECT marker, content FROM Footnotes WHERE block_id = ?", 
-                    (block['block_id'],)
-                )
-                footnotes = []
-                for fn in cursor.fetchall():
-                    footnotes.append({
-                        "marker": fn['marker'],
-                        "content": json.loads(fn['content'])
-                    })
-                
-                block['footnotes'] = footnotes
-                results.append(block)
-                
-            return results
+            return blocks
 
 if __name__ == "__main__":
     # Test initialization

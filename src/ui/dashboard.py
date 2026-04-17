@@ -3,13 +3,29 @@ import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
                              QMessageBox, QFrame, QLineEdit)
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
+
+class PDFWorker(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, book_id, output_path):
+        super().__init__()
+        self.book_id = book_id
+        self.output_path = output_path
+
+    def run(self):
+        try:
+            generator = PDFGenerator()
+            generator.generate_pdf(self.book_id, self.output_path)
+            self.finished.emit(True, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
 
 class MaktabaDashboard(QMainWindow):
     def __init__(self):
@@ -148,21 +164,22 @@ class MaktabaDashboard(QMainWindow):
         book_id = int(selected.text().split(" - ")[0])
         output_name = f"output/book_{book_id}.pdf"
         
-        try:
-            self.gen_pdf_btn.setEnabled(False)
-            self.gen_pdf_btn.setText("Generating...")
-            QApplication.processEvents() # Keep UI responsive
-            
-            os.makedirs("output", exist_ok=True)
-            generator = PDFGenerator()
-            generator.generate_pdf(book_id, output_name)
-            
-            QMessageBox.information(self, "Success", f"PDF generated successfully at:\n{output_name}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
-        finally:
-            self.gen_pdf_btn.setEnabled(True)
-            self.gen_pdf_btn.setText("Generate PDF")
+        self.gen_pdf_btn.setEnabled(False)
+        self.gen_pdf_btn.setText("Generating...")
+        
+        # Run generation in a separate thread to keep UI responsive
+        self.worker = PDFWorker(book_id, output_name)
+        self.worker.finished.connect(self.on_pdf_finished)
+        self.worker.start()
+
+    def on_pdf_finished(self, success, message):
+        self.gen_pdf_btn.setEnabled(True)
+        self.gen_pdf_btn.setText("Generate PDF")
+        
+        if success:
+            QMessageBox.information(self, "Success", f"PDF generated successfully at:\n{message}")
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to generate PDF: {message}")
 
 def main():
     app = QApplication(sys.argv)
