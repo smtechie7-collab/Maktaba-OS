@@ -1,0 +1,123 @@
+import sqlite3
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("Database")
+
+class DatabaseManager:
+    def __init__(self, db_path: str = "maktaba.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self):
+        """Initialize the database with the required tables."""
+        logger.info(f"Initializing database at {self.db_path}")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Books Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS Books (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    author TEXT,
+                    language TEXT DEFAULT 'en',
+                    metadata JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # 2. Chapters Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS Chapters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id INTEGER,
+                    title TEXT NOT NULL,
+                    sequence_number INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (book_id) REFERENCES Books (id) ON DELETE CASCADE
+                )
+            ''')
+
+            # 3. Content_Blocks Table (Hybrid JSON Storage)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS Content_Blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chapter_id INTEGER,
+                    content_type TEXT DEFAULT 'text', -- text, image, audio
+                    content_data JSON NOT NULL,      -- Stores Arabic, Urdu, etc. in JSON
+                    version INTEGER DEFAULT 1,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (chapter_id) REFERENCES Chapters (id) ON DELETE CASCADE
+                )
+            ''')
+            
+            conn.commit()
+        logger.info("Database initialization complete.")
+
+    def add_book(self, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> int:
+        """Add a new book to the database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Books (title, author, language, metadata) VALUES (?, ?, ?, ?)",
+                (title, author, language, json.dumps(metadata) if metadata else None)
+            )
+            return cursor.lastrowid
+
+    def add_chapter(self, book_id: int, title: str, sequence: int) -> int:
+        """Add a chapter to a book."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Chapters (book_id, title, sequence_number) VALUES (?, ?, ?)",
+                (book_id, title, sequence)
+            )
+            return cursor.lastrowid
+
+    def add_content_block(self, chapter_id: int, content_data: Dict[str, Any], content_type: str = 'text') -> int:
+        """Add a content block (e.g., Arabic text with Urdu translation) in JSON format."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Content_Blocks (chapter_id, content_type, content_data) VALUES (?, ?, ?)",
+                (chapter_id, content_type, json.dumps(content_data))
+            )
+            return cursor.lastrowid
+
+    def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
+        """Fetch all chapters and content for a specific book."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = '''
+                SELECT c.title as chapter_title, cb.content_data, cb.content_type
+                FROM Chapters c
+                JOIN Content_Blocks cb ON c.id = cb.chapter_id
+                WHERE c.book_id = ? AND cb.is_active = 1
+                ORDER BY c.sequence_number ASC, cb.id ASC
+            '''
+            cursor.execute(query, (book_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+if __name__ == "__main__":
+    # Test initialization
+    db = DatabaseManager("test_maktaba.db")
+    book_id = db.add_book("Test Islamic Book", "Author Name", "ar")
+    chap_id = db.add_chapter(book_id, "Introduction", 1)
+    db.add_content_block(chap_id, {
+        "ar": "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
+        "ur": "اللہ کے نام سے شروع جو بڑا مہربان نہایت رحم والا ہے",
+        "gu": "અલ્લાહના નામથી શરૂ જે ઘણો દયાળુ અને અત્યંત કૃપાળુ છે"
+    })
+    print(f"Sample data added to test_maktaba.db. Book ID: {book_id}")
