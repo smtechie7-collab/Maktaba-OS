@@ -40,3 +40,7 @@
 2026-04-17 12:53:43,311 - PDFGenerator - INFO - Rendering cover page...
 2026-04-17 12:53:43,311 - PDFGenerator - INFO - Rendering main content...
 2026-04-17 12:53:47,871 - PDFGenerator - INFO - PDF successfully generated at: output/advanced_book.pdf
+2026-04-17 13:03:10,656 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 13:03:10,663 - Database - INFO - Database initialization complete.
+2026-04-17 13:03:10,924 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 13:03:10,926 - Database - INFO - Database initialization complete.

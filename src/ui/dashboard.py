@@ -3,7 +3,8 @@ import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
                              QMessageBox, QFrame, QLineEdit, QDialog, QFormLayout,
-                             QComboBox, QTextEdit, QSpinBox)
+                             QComboBox, QTextEdit, QSpinBox, QFileDialog, QTreeWidget,
+                             QTreeWidgetItem, QSplitter)
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
 
@@ -185,8 +186,13 @@ class MaktabaDashboard(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
+        # Use QSplitter for resizable panels
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self.splitter)
+
         # Left Sidebar (Book List)
-        sidebar = QVBoxLayout()
+        sidebar_widget = QWidget()
+        sidebar = QVBoxLayout(sidebar_widget)
         header_label = QLabel("📚 Books")
         header_label.setObjectName("header")
         sidebar.addWidget(header_label)
@@ -206,13 +212,29 @@ class MaktabaDashboard(QMainWindow):
         self.load_books()
         sidebar.addWidget(self.book_list)
         
-        main_layout.addLayout(sidebar, 1)
+        self.splitter.addWidget(sidebar_widget)
+
+        # Middle Panel (Chapter Tree)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        
+        content_header = QLabel("📖 Structure")
+        content_header.setObjectName("header")
+        content_layout.addWidget(content_header)
+
+        self.chapter_tree = QTreeWidget()
+        self.chapter_tree.setHeaderLabels(["Title", "Type"])
+        self.chapter_tree.setColumnWidth(0, 250)
+        content_layout.addWidget(self.chapter_tree)
+
+        self.splitter.addWidget(content_widget)
 
         # Right Panel (Details & Actions)
-        right_panel = QVBoxLayout()
+        right_panel_widget = QWidget()
+        right_panel = QVBoxLayout(right_panel_widget)
         
         # Metadata Section
-        self.metadata_label = QLabel("Book Details")
+        self.metadata_label = QLabel("Details")
         self.metadata_label.setObjectName("header")
         right_panel.addWidget(self.metadata_label)
 
@@ -246,7 +268,10 @@ class MaktabaDashboard(QMainWindow):
         right_panel.addWidget(self.refresh_btn)
 
         right_panel.addStretch()
-        main_layout.addLayout(right_panel, 2)
+        self.splitter.addWidget(right_panel_widget)
+
+        # Initialize Status Bar
+        self.statusBar().showMessage("Ready")
 
     def load_books(self):
         search_query = self.search_bar.text().lower()
@@ -292,6 +317,7 @@ class MaktabaDashboard(QMainWindow):
             
             try:
                 self.db.add_chapter(book_id, data['title'], data['sequence'])
+                self.load_book_details(book_id) # Refresh tree
                 QMessageBox.information(self, "Success", f"Chapter '{data['title']}' added successfully!")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to add chapter: {str(e)}")
@@ -332,6 +358,7 @@ class MaktabaDashboard(QMainWindow):
                 
                 try:
                     self.db.add_content_block(chapter_id, data)
+                    self.load_book_details(book_id) # Refresh tree
                     QMessageBox.information(self, "Success", "Content block added successfully!")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add content: {str(e)}")
@@ -340,9 +367,14 @@ class MaktabaDashboard(QMainWindow):
         selected = self.book_list.currentItem()
         if not selected:
             self.details_area.setText("Select a book to see details")
+            self.chapter_tree.clear()
             return
 
         book_id = int(selected.text().split(" - ")[0])
+        self.load_book_details(book_id)
+
+    def load_book_details(self, book_id):
+        # 1. Update Metadata View
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM Books WHERE id = ?", (book_id,))
@@ -352,8 +384,24 @@ class MaktabaDashboard(QMainWindow):
             metadata_str += f"<b>Author:</b> {book['author']}<br>"
             metadata_str += f"<b>Language:</b> {book['language']}<br>"
             metadata_str += f"<b>Created:</b> {book['created_at']}<br>"
-            
             self.details_area.setText(metadata_str)
+
+        # 2. Update Chapter Tree (Visual Hierarchy)
+        self.chapter_tree.clear()
+        content = self.db.get_book_content(book_id)
+        
+        chapters = {}
+        for block in content:
+            chap_title = block['chapter_title']
+            if chap_title not in chapters:
+                chap_item = QTreeWidgetItem(self.chapter_tree, [chap_title, "Chapter"])
+                chap_item.setExpanded(True)
+                chapters[chap_title] = chap_item
+            
+            # Add content blocks as sub-items
+            block_data = json.loads(block['content_data'])
+            preview_text = block_data.get('ar', block_data.get('ur', block_data.get('en', 'Text Block')))[:30] + "..."
+            QTreeWidgetItem(chapters[chap_title], [preview_text, "Content"])
 
     def handle_pdf_generation(self):
         selected = self.book_list.currentItem()
@@ -362,13 +410,22 @@ class MaktabaDashboard(QMainWindow):
             return
 
         book_id = int(selected.text().split(" - ")[0])
-        output_name = f"output/book_{book_id}.pdf"
+        book_title = selected.text().split(" - ")[1].replace(" ", "_")
         
+        # UI/UX Improvement: Let user select where to save the PDF
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF As", f"{book_title}.pdf", "PDF Files (*.pdf)"
+        )
+        
+        if not file_path:
+            return
+
         self.gen_pdf_btn.setEnabled(False)
         self.gen_pdf_btn.setText("Generating...")
+        self.statusBar().showMessage(f"Generating PDF for Book ID {book_id}...")
         
         # Run generation in a separate thread to keep UI responsive
-        self.worker = PDFWorker(book_id, output_name)
+        self.worker = PDFWorker(book_id, file_path)
         self.worker.finished.connect(self.on_pdf_finished)
         self.worker.start()
 
@@ -377,8 +434,18 @@ class MaktabaDashboard(QMainWindow):
         self.gen_pdf_btn.setText("Generate PDF")
         
         if success:
-            QMessageBox.information(self, "Success", f"PDF generated successfully at:\n{message}")
+            self.statusBar().showMessage(f"Successfully generated PDF at {message}", 5000)
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Success")
+            msg_box.setText(f"PDF generated successfully at:\n{message}")
+            open_btn = msg_box.addButton("Open PDF", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.addButton(QMessageBox.StandardButton.Ok)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == open_btn:
+                os.startfile(os.path.abspath(message))
         else:
+            self.statusBar().showMessage("PDF Generation Failed!", 5000)
             QMessageBox.critical(self, "Error", f"Failed to generate PDF: {message}")
 
 def main():
