@@ -60,6 +60,10 @@ This project is governed by the [PROJECT_CONSTITUTION.md](PROJECT_CONSTITUTION.m
      ```bash
      python main.py export-pdf --id 1 --output output/my_book.pdf
      ```
+   - **Export Markdown**:
+     ```bash
+     python main.py export-md --id 1 --output output/my_book.md
+     ```
    - **Process Audio**:
      ```bash
      python main.py process-audio --input file1.mp3 file2.mp3 --output output/final.mp3

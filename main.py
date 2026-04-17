@@ -5,6 +5,7 @@ import logging
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
 from src.audio.processor import AudioProcessor
+from src.utils.md_exporter import MarkdownExporter
 from src.ui.dashboard import main as launch_gui
 
 # Setup logging
@@ -36,6 +37,11 @@ def main():
     pdf_parser.add_argument("--id", type=int, required=True, help="Book ID to export")
     pdf_parser.add_argument("--output", type=str, default="output/book_export.pdf", help="Output PDF path")
 
+    # Command: export-md
+    md_parser = subparsers.add_parser("export-md", help="Export a book to Markdown")
+    md_parser.add_argument("--id", type=int, required=True, help="Book ID to export")
+    md_parser.add_argument("--output", type=str, default="output/book_export.md", help="Output MD path")
+
     # Command: process-audio
     audio_parser = subparsers.add_parser("process-audio", help="Merge and normalize audio files")
     audio_parser.add_argument("--input", nargs="+", required=True, help="List of input audio files")
@@ -55,6 +61,11 @@ def main():
         os.makedirs("output", exist_ok=True)
         generator = PDFGenerator()
         generator.generate_pdf(args.id, args.output)
+
+    elif args.command == "export-md":
+        os.makedirs("output", exist_ok=True)
+        exporter = MarkdownExporter()
+        exporter.export_book(args.id, args.output)
 
     elif args.command == "process-audio":
         processor = AudioProcessor()

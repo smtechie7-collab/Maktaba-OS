@@ -32,3 +32,11 @@
 2026-04-17 12:51:52,293 - Database - INFO - Database initialization complete.
 2026-04-17 12:51:53,132 - Database - INFO - Initializing database at maktaba_production.db
 2026-04-17 12:51:53,138 - Database - INFO - Database initialization complete.
+2026-04-17 12:53:43,036 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:53:43,039 - Database - INFO - Database initialization complete.
+2026-04-17 12:53:43,304 - Database - INFO - Initializing database at maktaba_production.db
+2026-04-17 12:53:43,306 - Database - INFO - Database initialization complete.
+2026-04-17 12:53:43,306 - PDFGenerator - INFO - Starting PDF generation for Book ID: 2
+2026-04-17 12:53:43,311 - PDFGenerator - INFO - Rendering cover page...
+2026-04-17 12:53:43,311 - PDFGenerator - INFO - Rendering main content...
+2026-04-17 12:53:47,871 - PDFGenerator - INFO - PDF successfully generated at: output/advanced_book.pdf

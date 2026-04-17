@@ -29,7 +29,7 @@
         <h2 class="chapter-title">{{ chapter.chapter_title }}</h2>
         
         {% for block in chapter.blocks %}
-        <div class="content-block {{ block.content_type }}">
+        <div class="content-block side-by-side {{ block.content_type }}">
             {% if block.content_data.ar %}
             <p class="arabic">
                 {{ block.content_data.ar }}

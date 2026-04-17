@@ -94,6 +94,17 @@ body {
 
 .content-block {
     margin-bottom: 25pt;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15pt;
+}
+
+.content-block.side-by-side {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20pt;
+    border-bottom: 0.5pt solid #eee;
+    padding-bottom: 15pt;
 }
 
 .arabic {
@@ -101,6 +112,7 @@ body {
     font-family: 'Amiri', serif;
     color: #000;
     margin-bottom: 5pt;
+    grid-column: 1;
 }
 
 .urdu {
@@ -108,6 +120,7 @@ body {
     font-family: 'Jameel Noori Nastaliq', serif;
     color: #333;
     margin-bottom: 5pt;
+    grid-column: 2;
 }
 
 .english {

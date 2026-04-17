@@ -2,7 +2,8 @@ import sys
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
-                             QMessageBox, QFrame, QLineEdit)
+                             QMessageBox, QFrame, QLineEdit, QDialog, QFormLayout,
+                             QComboBox)
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
 
@@ -26,6 +27,39 @@ class PDFWorker(QThread):
             self.finished.emit(True, self.output_path)
         except Exception as e:
             self.finished.emit(False, str(e))
+
+class BookDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add New Book")
+        self.setMinimumWidth(400)
+        self.layout = QFormLayout(self)
+
+        self.title_input = QLineEdit()
+        self.author_input = QLineEdit()
+        self.lang_input = QComboBox()
+        self.lang_input.addItems(["Arabic", "Urdu", "English", "Multilingual"])
+
+        self.layout.addRow("Book Title:", self.title_input)
+        self.layout.addRow("Author:", self.author_input)
+        self.layout.addRow("Primary Language:", self.lang_input)
+
+        self.buttons = QHBoxLayout()
+        self.save_btn = QPushButton("Save Book")
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        self.buttons.addWidget(self.save_btn)
+        self.buttons.addWidget(self.cancel_btn)
+        self.layout.addRow(self.buttons)
+
+    def get_data(self):
+        return {
+            "title": self.title_input.text(),
+            "author": self.author_input.text(),
+            "language": self.lang_input.currentText().lower()[:2] if self.lang_input.currentText() != "Multilingual" else "multi"
+        }
 
 class MaktabaDashboard(QMainWindow):
     def __init__(self):
@@ -86,6 +120,11 @@ class MaktabaDashboard(QMainWindow):
         self.search_bar.textChanged.connect(self.load_books)
         sidebar.addWidget(self.search_bar)
 
+        self.add_book_btn = QPushButton("+ Add New Book")
+        self.add_book_btn.setObjectName("primaryBtn")
+        self.add_book_btn.clicked.connect(self.show_add_book_dialog)
+        sidebar.addWidget(self.add_book_btn)
+
         self.book_list = QListWidget()
         self.book_list.itemSelectionChanged.connect(self.handle_selection_change)
         self.load_books()
@@ -133,8 +172,25 @@ class MaktabaDashboard(QMainWindow):
             cursor.execute("SELECT id, title, author FROM Books")
             for row in cursor.fetchall():
                 display_text = f"{row['id']} - {row['title']}"
-                if search_query in display_text.lower() or search_query in row['author'].lower():
+                # Handle potential None in author
+                author = row['author'] if row['author'] else ""
+                if search_query in display_text.lower() or search_query in author.lower():
                     self.book_list.addItem(display_text)
+
+    def show_add_book_dialog(self):
+        dialog = BookDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            if not data['title']:
+                QMessageBox.warning(self, "Validation Error", "Book title is required!")
+                return
+            
+            try:
+                self.db.add_book(data['title'], data['author'], data['language'])
+                self.load_books()
+                QMessageBox.information(self, "Success", f"Book '{data['title']}' added successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to add book: {str(e)}")
 
     def handle_selection_change(self):
         selected = self.book_list.currentItem()

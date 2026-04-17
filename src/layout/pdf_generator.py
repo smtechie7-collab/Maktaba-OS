@@ -15,9 +15,10 @@ class PDFGenerator:
     def __init__(self, template_dir="src/layout/templates", db_path="maktaba_production.db"):
         self.env = Environment(loader=FileSystemLoader(template_dir))
         self.template = self.env.get_template("book_template.html")
+        self.cover_template = self.env.get_template("cover_template.html")
         self.db = DatabaseManager(db_path)
 
-    def generate_pdf(self, book_id: int, output_path: str):
+    def generate_pdf(self, book_id: int, output_path: str, include_cover: bool = True):
         """Fetch book data and generate a PDF."""
         logger.info(f"Starting PDF generation for Book ID: {book_id}")
         
@@ -31,10 +32,9 @@ class PDFGenerator:
                 logger.error(f"Book with ID {book_id} not found.")
                 return
 
-        # 2. Fetch content using the centralized DatabaseManager method
+        # 2. Fetch content optimized
         content_blocks = self.db.get_book_content(book_id)
         
-        # Group blocks by chapter for the template
         chapters_data = []
         current_chapter_id = None
         current_chapter_dict = None
@@ -54,17 +54,27 @@ class PDFGenerator:
                 "footnotes": block['footnotes']
             })
 
-        # 3. Render HTML
-        html_content = self.template.render(
+        # 3. Render Templates
+        full_html = ""
+        
+        if include_cover:
+            logger.info("Rendering cover page...")
+            full_html += self.cover_template.render(
+                book_title=book_info['title'],
+                author=book_info['author']
+            )
+            full_html += '<div style="page-break-after: always;"></div>'
+
+        logger.info("Rendering main content...")
+        full_html += self.template.render(
             book_title=book_info['title'],
             author=book_info['author'],
             chapters=chapters_data
         )
 
         # 4. Generate PDF
-        # WeasyPrint needs the base_url to find the CSS file
         base_url = os.path.dirname(os.path.abspath(__file__)) + "/templates/"
-        HTML(string=html_content, base_url=base_url).write_pdf(output_path)
+        HTML(string=full_html, base_url=base_url).write_pdf(output_path)
         
         logger.info(f"PDF successfully generated at: {output_path}")
 
