@@ -1,7 +1,8 @@
 import sys
 import os
 import json
-from pydub import AudioSegment
+import re  # NAYA IMPORT: Regex use karne ke liye for unicode detection
+
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QListWidget,
                              QMessageBox, QFrame, QLineEdit, QDialog, QFormLayout,
@@ -9,14 +10,18 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTreeWidgetItem, QSplitter, QTabWidget, QSlider, QCheckBox,
                              QGroupBox, QColorDialog, QScrollArea)
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QColor
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
 from src.utils.md_exporter import MarkdownExporter
-from src.audio.processor import AudioProcessor
+
+# Import Decoupled Components
+from src.ui.components.editor_panel import EditorPanel
+from src.ui.components.audio_panel import AudioPanel
 
 class PDFWorker(QThread):
     finished = pyqtSignal(bool, str)
@@ -150,28 +155,50 @@ class BulkImportDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Bulk Import - Smart Text Converter")
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(500)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
         self.layout = QVBoxLayout(self)
 
-        self.layout.addWidget(QLabel("Paste your raw text below. Use double newlines to separate blocks."))
-        self.layout.addWidget(QLabel("Format: Arabic line, then Urdu line, then Gujarati (optional)."))
+        info_text = """
+        <b>Smart Parser Instructions:</b><br>
+        Paste your raw text below. Use double newlines to separate blocks.<br>
+        <i>The system will auto-detect languages based on Unicode characters:</i><br>
+        - Arabic (ar): U+0600-U+06FF<br>
+        - Urdu (ur): Automatically falls back to Urdu if Arabic is already filled.<br>
+        - Gujarati (guj): U+0A80-U+0AFF<br>
+        - Hinglish/English (en): Basic Latin A-Z.
+        """
+        self.layout.addWidget(QLabel(info_text))
 
         self.raw_text = QTextEdit()
-        self.raw_text.setPlaceholderText("Enter bulk text here...")
+        self.raw_text.setPlaceholderText("Paste your Dalail multi-language text here...\n\nExample:\nبِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ\nاللہ کے نام سے شروع جو بڑا مہربان نہایت رحم والا ہے\nબિસ્મિલ્લાહિર રહેમાનિર રહીમ\nBismillah ir Rahman ir Raheem\n\n(Leave an empty line between blocks)")
         self.layout.addWidget(self.raw_text)
 
-        self.options_layout = QHBoxLayout()
-        self.separator_label = QLabel("Separator:")
+        # Config Panel
+        config_group = QGroupBox("Import Configuration")
+        config_layout = QFormLayout()
+        
         self.separator_input = QLineEdit("\n\n")
-        self.separator_input.setMaximumWidth(100)
-        self.options_layout.addWidget(self.separator_label)
-        self.options_layout.addWidget(self.separator_input)
-        self.options_layout.addStretch()
-        self.layout.addLayout(self.options_layout)
+        self.separator_input.setMaximumWidth(150)
+        config_layout.addRow("Block Separator (Regex allowed):", self.separator_input)
+        
+        self.day_combo = QComboBox()
+        self.day_combo.addItems(["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        config_layout.addRow("Assign Day:", self.day_combo)
+        
+        self.track_combo = QComboBox()
+        self.track_combo.addItems(["T1 (Daily Base)", "T2 (Dua Iftitah)", "T3 (Monday Hizb)", "T4 (Tuesday)", "T5 (Wednesday)", "T6 (Thursday)", "T7 (Friday)", "T8 (Saturday)", "T9 (Sunday)", "T10 (Shajra)"])
+        config_layout.addRow("Assign Track:", self.track_combo)
+        
+        self.section_combo = QComboBox()
+        self.section_combo.addItems(["General", "Muqaddama", "Asma-ul-Husna", "Dua-e-Iftitah", "Hizb", "Shajra"])
+        config_layout.addRow("Assign Section:", self.section_combo)
+        
+        config_group.setLayout(config_layout)
+        self.layout.addWidget(config_group)
 
         self.buttons = QHBoxLayout()
-        self.import_btn = QPushButton("🚀 Start Import")
+        self.import_btn = QPushButton("🚀 Start Smart Import")
         self.import_btn.setObjectName("primaryBtn")
         self.import_btn.clicked.connect(self.accept)
         self.cancel_btn = QPushButton("Cancel")
@@ -183,7 +210,12 @@ class BulkImportDialog(QDialog):
     def get_data(self):
         return {
             "text": self.raw_text.toPlainText(),
-            "separator": self.separator_input.text()
+            "separator": self.separator_input.text(),
+            "metadata": {
+                "day": self.day_combo.currentText(),
+                "track": self.track_combo.currentText().split(" ")[0],
+                "section": self.section_combo.currentText()
+            }
         }
 
 class MaktabaDashboard(QMainWindow):
@@ -194,7 +226,7 @@ class MaktabaDashboard(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("Maktaba-OS | Digital Publishing Dashboard")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1000, 700)
         
         # Apply High-Contrast Dark Theme
         self.setStyleSheet("""
@@ -205,7 +237,7 @@ class MaktabaDashboard(QMainWindow):
                 font-size: 14px;
             }
             QLabel { font-weight: 500; }
-            QListWidget { 
+            QListWidget, QTreeWidget { 
                 background-color: #161616; 
                 border: 1px solid #333; 
                 border-radius: 5px; 
@@ -214,7 +246,7 @@ class MaktabaDashboard(QMainWindow):
                 color: #ffffff;
             }
             QListWidget::item { padding: 12px; border-bottom: 1px solid #222; }
-            QListWidget::item:selected { background-color: #3d5afe; color: white; border-radius: 3px; font-weight: bold; }
+            QListWidget::item:selected, QTreeWidget::item:selected { background-color: #3d5afe; color: white; border-radius: 3px; font-weight: bold; }
             
             QPushButton { 
                 background-color: #2a2a2a; 
@@ -259,13 +291,6 @@ class MaktabaDashboard(QMainWindow):
                 padding-top: 15px;
             }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #3d5afe; }
-            
-            QTreeWidget {
-                background-color: #161616;
-                color: #ffffff;
-                border: 1px solid #333;
-                font-weight: bold;
-            }
         """)
 
         # Main Layout with 3 panels
@@ -322,11 +347,6 @@ class MaktabaDashboard(QMainWindow):
         self.bulk_import_btn.clicked.connect(self.show_bulk_import_dialog)
         left_layout.addWidget(self.bulk_import_btn)
 
-        left_layout.addWidget(QLabel("📅 Days"))
-        self.day_list = QListWidget()
-        self.day_list.addItems(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
-        left_layout.addWidget(self.day_list)
-
         self.main_splitter.addWidget(left_widget)
         self.left_widget = left_widget
 
@@ -344,106 +364,24 @@ class MaktabaDashboard(QMainWindow):
         self.center_tabs = QTabWidget()
         self.center_tabs.setTabPosition(QTabWidget.TabPosition.North)
 
-        self.text_editor_tab = QWidget()
-        text_editor_layout = QVBoxLayout(self.text_editor_tab)
+        # --- DYNAMIC EDITOR PANEL (Decoupled Component) ---
+        self.editor_panel = EditorPanel()
+        self.editor_panel.save_requested.connect(self.save_content_block)
+        self.editor_panel.focus_mode_btn.clicked.connect(self.toggle_focus_mode)
+        self.editor_panel.preview_mode_btn.clicked.connect(self.toggle_preview_mode)
+        self.center_tabs.addTab(self.editor_panel, "📝 Text Editor")
 
-        toolbar = QHBoxLayout()
-        self.focus_mode_btn = QPushButton("🎯 Focus Mode")
-        self.focus_mode_btn.setCheckable(True)
-        self.focus_mode_btn.clicked.connect(self.toggle_focus_mode)
-        toolbar.addWidget(self.focus_mode_btn)
+        # --- AUDIO PANEL (Decoupled Component) ---
+        self.audio_panel = AudioPanel()
+        self.center_tabs.addTab(self.audio_panel, "🎵 Audio Engine")
 
-        self.preview_mode_btn = QPushButton("👁 Preview")
-        self.preview_mode_btn.setCheckable(True)
-        self.preview_mode_btn.clicked.connect(self.toggle_preview_mode)
-        toolbar.addWidget(self.preview_mode_btn)
-
-        text_editor_layout.addLayout(toolbar)
-
-        grid_layout = QHBoxLayout()
-
-        ar_widget = QWidget()
-        ar_layout = QVBoxLayout(ar_widget)
-        ar_layout.addWidget(QLabel("Arabic (نص عربي)"))
-        self.ar_text = QTextEdit()
-        self.ar_text.setPlaceholderText("Arabic text here... (نص عربي)")
-        self.ar_text.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.ar_text.setAlignment(Qt.AlignmentFlag.AlignRight)
-        # Default font for shaping
-        self.ar_text.setFont(QFont("Amiri", 18))
-        self.ar_text.textChanged.connect(self.on_text_changed)
-        ar_layout.addWidget(self.ar_text)
-        grid_layout.addWidget(ar_widget)
-
-        ur_widget = QWidget()
-        ur_layout = QVBoxLayout(ur_widget)
-        ur_layout.addWidget(QLabel("Urdu (اردو)"))
-        self.ur_text = QTextEdit()
-        self.ur_text.setPlaceholderText("Urdu translation... (اردو)")
-        self.ur_text.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.ur_text.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.ur_text.setFont(QFont("Jameel Noori Nastaliq", 16))
-        self.ur_text.textChanged.connect(self.on_text_changed)
-        ur_layout.addWidget(self.ur_text)
-        grid_layout.addWidget(ur_widget)
-
-        guj_widget = QWidget()
-        guj_layout = QVBoxLayout(guj_widget)
-        guj_layout.addWidget(QLabel("Gujarati Transliteration"))
-        self.guj_text = QTextEdit()
-        self.guj_text.setPlaceholderText("Gujarati transliteration...")
-        self.guj_text.textChanged.connect(self.on_text_changed)
-        guj_layout.addWidget(self.guj_text)
-        grid_layout.addWidget(guj_widget)
-
-        text_editor_layout.addLayout(grid_layout)
-
-        ref_layout = QHBoxLayout()
-        ref_layout.addWidget(QLabel("Reference:"))
-        self.ref_input = QLineEdit()
-        self.ref_input.setPlaceholderText("e.g. Bukhari 123")
-        ref_layout.addWidget(self.ref_input)
-        self.save_block_btn = QPushButton("💾 Save Block")
-        self.save_block_btn.clicked.connect(self.save_content_block)
-        ref_layout.addWidget(self.save_block_btn)
-        text_editor_layout.addLayout(ref_layout)
-
-        self.center_tabs.addTab(self.text_editor_tab, "📝 Text Editor")
-
-        self.audio_tab = QWidget()
-        audio_layout = QVBoxLayout(self.audio_tab)
-
-        audio_header = QLabel("🎵 Audio Timeline")
-        audio_header.setStyleSheet("font-size: 16px; font-weight: bold;")
-        audio_layout.addWidget(audio_header)
-
-        self.audio_timeline = QTextEdit()
-        self.audio_timeline.setMaximumHeight(150)
-        self.audio_timeline.setPlaceholderText("Audio timeline... (Tilawat | 2s Gap | Tarjuma)")
-        audio_layout.addWidget(self.audio_timeline)
-
-        audio_controls = QHBoxLayout()
-        self.load_audio_btn = QPushButton("📂 Load Audio Files")
-        self.load_audio_btn.clicked.connect(self.load_audio_files)
-        audio_controls.addWidget(self.load_audio_btn)
-
-        self.stitch_audio_btn = QPushButton("🔗 Stitch Audio")
-        self.stitch_audio_btn.setObjectName("primaryBtn")
-        self.stitch_audio_btn.clicked.connect(self.stitch_audio_files)
-        audio_controls.addWidget(self.stitch_audio_btn)
-        audio_layout.addLayout(audio_controls)
-
-        self.audio_list_widget = QListWidget()
-        audio_layout.addWidget(self.audio_list_widget)
-
-        self.center_tabs.addTab(self.audio_tab, "🎵 Audio")
-
+        # --- PDF PREVIEW TAB ---
         self.pdf_preview_tab = QWidget()
         pdf_layout = QVBoxLayout(self.pdf_preview_tab)
         pdf_header = QLabel("📄 PDF Preview")
         pdf_header.setStyleSheet("font-size: 16px; font-weight: bold;")
         pdf_layout.addWidget(pdf_header)
-        self.pdf_preview_label = QLabel("Select a book and click 'Generate PDF' to preview")
+        self.pdf_preview_label = QLabel("Select a book and click 'Generate PDF' to view")
         self.pdf_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.pdf_preview_label.setStyleSheet("padding: 50px; color: #ffffff; font-weight: bold;")
         pdf_layout.addWidget(self.pdf_preview_label)
@@ -466,6 +404,7 @@ class MaktabaDashboard(QMainWindow):
 
         self.properties_tabs = QTabWidget()
 
+        # 1. Typography Settings Tab
         self.typography_tab = QWidget()
         typo_layout = QVBoxLayout(self.typography_tab)
 
@@ -504,7 +443,7 @@ class MaktabaDashboard(QMainWindow):
         guj_font_group = QGroupBox("Gujarati Font")
         guj_font_layout = QFormLayout()
         self.guj_font_combo = QComboBox()
-        self.guj_font_combo.addItems(["Aakar", "Mahashakti", "Sahadeva", "Noto Sans Gujarati"])
+        self.guj_font_combo.addItems(["Noto Sans Gujarati", "Aakar", "Mahashakti", "Sahadeva"])
         guj_font_layout.addRow("Font:", self.guj_font_combo)
         self.guj_size_slider = QSlider(Qt.Orientation.Horizontal)
         self.guj_size_slider.setMinimum(12)
@@ -525,6 +464,7 @@ class MaktabaDashboard(QMainWindow):
         typo_layout.addStretch()
         self.properties_tabs.addTab(self.typography_tab, "🔤 Typography")
 
+        # 2. Layout Settings Tab
         self.layout_tab = QWidget()
         layout_layout = QVBoxLayout(self.layout_tab)
 
@@ -595,57 +535,26 @@ class MaktabaDashboard(QMainWindow):
 
         layout_layout.addStretch()
         self.properties_tabs.addTab(self.layout_tab, "📐 Layout")
-
-        self.audio_properties_tab = QWidget()
-        audio_props_layout = QVBoxLayout(self.audio_properties_tab)
-
-        audio_settings = QGroupBox("🎚 Audio Settings")
-        audio_settings_layout = QFormLayout()
-        self.crossfade_ms = QSpinBox()
-        self.crossfade_ms.setRange(0, 5000)
-        self.crossfade_ms.setValue(2000)
-        self.crossfade_ms.setSuffix(" ms")
-        audio_settings_layout.addRow("Crossfade:", self.crossfade_ms)
-
-        self.target_lufs = QSpinBox()
-        self.target_lufs.setRange(-24, -10)
-        self.target_lufs.setValue(-16)
-        self.target_lufs.setSuffix(" LUFS")
-        audio_settings_layout.addRow("Target LUFS:", self.target_lufs)
-        audio_settings.setLayout(audio_settings_layout)
-        audio_props_layout.addWidget(audio_settings)
-
-        self.merge_audio_btn = QPushButton("🔗 Merge All Audio")
-        self.merge_audio_btn.setObjectName("primaryBtn")
-        self.merge_audio_btn.clicked.connect(self.stitch_audio_files)
-        audio_props_layout.addWidget(self.merge_audio_btn)
-
-        self.normalize_audio_btn = QPushButton("📊 Normalize Audio")
-        self.normalize_audio_btn.clicked.connect(self.normalize_audio)
-        audio_props_layout.addWidget(self.normalize_audio_btn)
-
-        audio_props_layout.addStretch()
-        self.properties_tabs.addTab(self.audio_properties_tab, "🎵 Audio")
-
-        # Right Panel (Details & Actions)
-        right_panel_widget = QWidget()
-        right_panel = QVBoxLayout(right_panel_widget)
         
         # Metadata Section
         self.metadata_label = QLabel("Details")
         self.metadata_label.setObjectName("header")
-        right_panel.addWidget(self.metadata_label)
+        right_layout.addWidget(self.metadata_label)
 
         self.details_area = QLabel("Select a book to see details")
         self.details_area.setWordWrap(True)
         self.details_area.setStyleSheet("background-color: #1e1e1e; padding: 15px; border-radius: 5px; border: 1px solid #333;")
-        right_panel.addWidget(self.details_area)
+        right_layout.addWidget(self.details_area)
+        
+        # Chapter Tree initialized correctly to avoid crash
+        self.chapter_tree = QTreeWidget()
+        self.chapter_tree.setHeaderLabels(["Content Title", "Type"])
+        self.chapter_tree.setStyleSheet("background-color: #161616; color: #fff; border: 1px solid #333; margin-top: 10px;")
+        right_layout.addWidget(self.chapter_tree)
 
-        right_panel.addSpacing(20)
-
-        # Properties Section
-        right_panel.addWidget(self.properties_tabs)
-        self.right_widget = right_panel_widget
+        right_layout.addSpacing(20)
+        right_layout.addWidget(self.properties_tabs)
+        self.right_widget = right_widget
 
         refresh_layout = QHBoxLayout()
         self.refresh_btn = QPushButton("🔄 Refresh")
@@ -656,10 +565,10 @@ class MaktabaDashboard(QMainWindow):
         self.gen_pdf_btn.setObjectName("primaryBtn")
         self.gen_pdf_btn.clicked.connect(self.handle_pdf_generation)
         refresh_layout.addWidget(self.gen_pdf_btn)
-        right_panel.addWidget(QFrame()) # spacer
-        right_panel.addLayout(refresh_layout)
+        right_layout.addWidget(QFrame()) # spacer
+        right_layout.addLayout(refresh_layout)
 
-        self.main_splitter.addWidget(right_panel_widget)
+        self.main_splitter.addWidget(right_widget)
 
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 3)
@@ -667,8 +576,6 @@ class MaktabaDashboard(QMainWindow):
 
         # Initialize Status Bar
         self.statusBar().showMessage("Ready")
-
-        # Focus Mode State
         self.focus_mode_active = False
 
     def handle_open_project(self):
@@ -682,7 +589,6 @@ class MaktabaDashboard(QMainWindow):
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Simple Import Logic: Create a new book from the project file
             book_id = self.db.add_book(
                 f"Imported: {os.path.basename(file_path)}", 
                 "Unknown", 
@@ -690,12 +596,10 @@ class MaktabaDashboard(QMainWindow):
                 metadata=data.get("typography")
             )
             
-            # Add a default chapter and import blocks
             chap_id = self.db.add_chapter(book_id, "Imported Content", 1)
             
             blocks = data.get("content", [])
             for block in blocks:
-                # Re-save block data
                 block_data = json.loads(block['content_data']) if isinstance(block['content_data'], str) else block['content_data']
                 self.db.add_content_block(chap_id, block_data)
             
@@ -714,7 +618,6 @@ class MaktabaDashboard(QMainWindow):
             cursor.execute("SELECT id, title, author FROM Books")
             for row in cursor.fetchall():
                 display_text = f"{row['id']} - {row['title']}"
-                # Handle potential None in author
                 author = row['author'] if row['author'] else ""
                 if search_query in display_text.lower() or search_query in author.lower():
                     self.book_list.addItem(display_text)
@@ -726,7 +629,6 @@ class MaktabaDashboard(QMainWindow):
             if not data['title']:
                 QMessageBox.warning(self, "Validation Error", "Book title is required!")
                 return
-            
             try:
                 self.db.add_book(data['title'], data['author'], data['language'])
                 self.load_books()
@@ -747,10 +649,9 @@ class MaktabaDashboard(QMainWindow):
             if not data['title']:
                 QMessageBox.warning(self, "Validation Error", "Chapter title is required!")
                 return
-            
             try:
                 self.db.add_chapter(book_id, data['title'], data['sequence'])
-                self.load_book_details(book_id) # Refresh tree
+                self.load_book_details(book_id)
                 QMessageBox.information(self, "Success", f"Chapter '{data['title']}' added successfully!")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to add chapter: {str(e)}")
@@ -762,10 +663,6 @@ class MaktabaDashboard(QMainWindow):
             return
 
         book_id = int(selected.text().split(" - ")[0])
-        
-        # We need to know which chapter to add content to. 
-        # For simplicity, we'll fetch the latest chapter or ask the user.
-        # Let's fetch available chapters for this book.
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (book_id,))
@@ -775,7 +672,6 @@ class MaktabaDashboard(QMainWindow):
             QMessageBox.warning(self, "No Chapters", "Please create a chapter first!")
             return
 
-        # Simple chapter selection dialog
         items = [f"{c['id']} - {c['title']}" for c in chapters]
         from PyQt6.QtWidgets import QInputDialog
         item, ok = QInputDialog.getItem(self, "Select Chapter", "Add content to:", items, 0, False)
@@ -788,10 +684,9 @@ class MaktabaDashboard(QMainWindow):
                 if not any([data['ar'], data['ur'], data['en']]):
                     QMessageBox.warning(self, "Validation Error", "At least one text field is required!")
                     return
-                
                 try:
                     self.db.add_content_block(chapter_id, data)
-                    self.load_book_details(book_id) # Refresh tree
+                    self.load_book_details(book_id)
                     QMessageBox.information(self, "Success", "Content block added successfully!")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add content: {str(e)}")
@@ -803,8 +698,6 @@ class MaktabaDashboard(QMainWindow):
             return
 
         book_id = int(selected.text().split(" - ")[0])
-        
-        # Select chapter
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (book_id,))
@@ -825,11 +718,18 @@ class MaktabaDashboard(QMainWindow):
                 data = dialog.get_data()
                 raw_text = data['text']
                 separator = data['separator']
+                metadata = data['metadata']
                 
                 if not raw_text.strip():
                     return
                 
-                blocks = raw_text.split(separator)
+                # Split using simple separator or regex if it looks like regex
+                if '\\' in separator or separator == '\n\n':
+                     # Basic split for simple double newlines
+                     blocks = re.split(r'\n\s*\n', raw_text.strip())
+                else:
+                     blocks = raw_text.split(separator)
+                
                 imported_count = 0
                 
                 for block in blocks:
@@ -837,34 +737,61 @@ class MaktabaDashboard(QMainWindow):
                     if not lines: continue
                     
                     block_data = {
-                        "ar": lines[0].strip() if len(lines) > 0 else "",
-                        "ur": lines[1].strip() if len(lines) > 1 else "",
-                        "guj": lines[2].strip() if len(lines) > 2 else "",
-                        "reference": ""
+                        "ar": "",
+                        "ur": "",
+                        "guj": "",
+                        "en": "",
+                        "reference": "",
+                        "metadata": metadata
                     }
+                    
+                    # SMART PARSING LOGIC
+                    for line in lines:
+                        line = line.strip()
+                        if not line: continue
+                        
+                        # Detect Gujarati (U+0A80 to U+0AFF)
+                        if re.search(r'[\u0a80-\u0aff]', line):
+                            block_data["guj"] = line
+                        # Detect Basic Latin (Hinglish/English)
+                        elif re.search(r'^[a-zA-Z0-9\s.,!?\'"-]+$', line):
+                            block_data["en"] = line
+                        # Detect Arabic/Urdu (U+0600 to U+06FF)
+                        elif re.search(r'[\u0600-\u06ff]', line):
+                            # Usually Arabic comes first. If empty, put in AR. Else put in UR.
+                            if not block_data["ar"]:
+                                block_data["ar"] = line
+                            else:
+                                block_data["ur"] = line
+                        else:
+                            # Fallback if detection fails (e.g., special symbols)
+                            if not block_data["ar"]: block_data["ar"] = line
+                            elif not block_data["ur"]: block_data["ur"] = line
+                            elif not block_data["guj"]: block_data["guj"] = line
+                            else: block_data["en"] = line
                     
                     try:
                         self.db.add_content_block(chapter_id, block_data)
                         imported_count += 1
                     except Exception as e:
-                        logger.error(f"Bulk import failed for block: {str(e)}")
+                        print(f"Bulk import failed for block: {str(e)}")
                 
                 self.load_book_details(book_id)
-                QMessageBox.information(self, "Import Complete", f"Successfully imported {imported_count} blocks!")
+                QMessageBox.information(self, "Import Complete", f"Successfully imported {imported_count} blocks using Smart Parser!")
 
     def handle_selection_change(self):
         selected = self.book_list.currentItem()
         if not selected:
             if hasattr(self, 'details_area'):
                 self.details_area.setText("Select a book to see details")
-            self.chapter_tree.clear()
+            if hasattr(self, 'chapter_tree'):
+                self.chapter_tree.clear()
             return
 
         book_id = int(selected.text().split(" - ")[0])
         self.load_book_details(book_id)
 
     def load_book_details(self, book_id):
-        # 1. Update Metadata View
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM Books WHERE id = ?", (book_id,))
@@ -877,25 +804,23 @@ class MaktabaDashboard(QMainWindow):
             if hasattr(self, 'details_area'):
                 self.details_area.setText(metadata_str)
 
-        # 2. Update Chapter Tree (Visual Hierarchy)
-        self.chapter_tree.clear()
-        content = self.db.get_book_content(book_id)
-        
-        chapters = {}
-        for block in content:
-            chap_title = block['chapter_title']
-            if chap_title not in chapters:
-                chap_item = QTreeWidgetItem(self.chapter_tree, [chap_title, "Chapter"])
-                chap_item.setExpanded(True)
-                chapters[chap_title] = chap_item
+        if hasattr(self, 'chapter_tree'):
+            self.chapter_tree.clear()
+            content = self.db.get_book_content(book_id)
             
-            # Add content blocks as sub-items
-            block_data = json.loads(block['content_data'])
-            preview_text = block_data.get('ar', block_data.get('ur', block_data.get('en', 'Text Block')))[:30] + "..."
-            QTreeWidgetItem(chapters[chap_title], [preview_text, "Content"])
+            chapters = {}
+            for block in content:
+                chap_title = block['chapter_title']
+                if chap_title not in chapters:
+                    chap_item = QTreeWidgetItem(self.chapter_tree, [chap_title, "Chapter"])
+                    chap_item.setExpanded(True)
+                    chapters[chap_title] = chap_item
+                
+                block_data = json.loads(block['content_data'])
+                preview_text = block_data.get('ar', block_data.get('ur', block_data.get('en', 'Text Block')))[:30] + "..."
+                QTreeWidgetItem(chapters[chap_title], [preview_text, "Content"])
 
     def get_current_styles(self):
-        """Helper to collect current UI styles for PDF generation."""
         return {
             "margins": {
                 "top": self.top_margin.value(),
@@ -924,11 +849,9 @@ class MaktabaDashboard(QMainWindow):
         book_id = int(selected.text().split(" - ")[0])
         book_title = selected.text().split(" - ")[1].replace(" ", "_")
         
-        # UI/UX Improvement: Let user select where to save the PDF
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save PDF As", f"{book_title}.pdf", "PDF Files (*.pdf)"
         )
-        
         if not file_path:
             return
 
@@ -936,7 +859,6 @@ class MaktabaDashboard(QMainWindow):
         self.gen_pdf_btn.setText("Generating...")
         self.statusBar().showMessage(f"Generating PDF for Book ID {book_id}...")
         
-        # Run generation in a separate thread to keep UI responsive
         styles = self.get_current_styles()
         self.worker = PDFWorker(book_id, file_path, styles)
         self.worker.finished.connect(self.on_pdf_finished)
@@ -954,58 +876,14 @@ class MaktabaDashboard(QMainWindow):
             open_btn = msg_box.addButton("Open PDF", QMessageBox.ButtonRole.AcceptRole)
             msg_box.addButton(QMessageBox.StandardButton.Ok)
             msg_box.exec()
-            
             if msg_box.clickedButton() == open_btn:
                 os.startfile(os.path.abspath(message))
         else:
             self.statusBar().showMessage("PDF Generation Failed!", 5000)
             QMessageBox.critical(self, "Error", f"Failed to generate PDF: {message}")
 
-    def on_text_changed(self):
-        # 1. Holy Names Highlighting
-        if self.holy_names_checkbox.isChecked():
-            self.apply_holy_names_highlight()
-            
-        # 2. Auto-Fit Warning (Character limit check)
-        self.check_overflow(self.ar_text)
-        self.check_overflow(self.ur_text)
-        self.check_overflow(self.guj_text)
-
-    def check_overflow(self, editor):
-        # Limit for A5 page block approximately
-        limit = 600 
-        text_len = len(editor.toPlainText())
-        
-        if text_len > limit:
-            editor.setStyleSheet("border: 2px solid #ff4444; background-color: #1a0000;")
-            self.statusBar().showMessage(f"⚠️ Warning: Text overflow detected! ({text_len}/{limit} chars)", 2000)
-        else:
-            # Revert to normal style if within limit
-            editor.setStyleSheet("") # This will fallback to global stylesheet 
-
-    def apply_holy_names_highlight(self):
-        html_format = '<span style="color: gold;">{text}</span>'
-        cursor = self.ar_text.textCursor()
-        cursor.movePosition(cursor.MoveOperation.Start)
-        text = self.ar_text.toPlainText()
-        if "Allah" in text or "الله" in text:
-            text = text.replace("Allah", '<span style="color: gold;">Allah</span>')
-            text = text.replace("الله", '<span style="color: gold;">الله</span>')
-        if "Muhammad" in text or "محمد" in text:
-            text = text.replace("Muhammad (ﷺ)", '<span style="color: #ff6b6b;">Muhammad (ﷺ)</span>')
-            text = text.replace("محمد", '<span style="color: #ff6b6b;">محمد</span>')
-        
-        # Block signals to prevent infinite recursion
-        self.ar_text.blockSignals(True)
-        self.ar_text.setPlainText("")
-        self.ar_text.insertPlainText(text)
-        self.ar_text.blockSignals(False)
-
     def toggle_holy_highlighter(self, state):
-        if state:
-            self.apply_holy_names_highlight()
-        else:
-            pass
+        self.editor_panel.toggle_holy_highlighter(state)
 
     def toggle_focus_mode(self, checked):
         self.focus_mode_active = checked
@@ -1046,7 +924,7 @@ class MaktabaDashboard(QMainWindow):
         if color.isValid():
             self.statusBar().showMessage(f"Border color selected: {color.name()}", 3000)
 
-    def save_content_block(self):
+    def save_content_block(self, data):
         selected = self.book_list.currentItem()
         if not selected:
             QMessageBox.warning(self, "No Selection", "Please select a book first!")
@@ -1062,16 +940,10 @@ class MaktabaDashboard(QMainWindow):
                 return
             chapter_id = result[0]
 
-        data = {
-            "ar": self.ar_text.toPlainText().strip(),
-            "ur": self.ur_text.toPlainText().strip(),
-            "guj": self.guj_text.toPlainText().strip(),
-            "reference": self.ref_input.text().strip()
-        }
-
         try:
             self.db.add_content_block(chapter_id, data)
             self.load_book_details(book_id)
+            self.editor_panel.clear_fields()
             self.statusBar().showMessage("Content block saved successfully!", 3000)
             QMessageBox.information(self, "Success", "Content block saved!")
         except Exception as e:
@@ -1131,7 +1003,6 @@ class MaktabaDashboard(QMainWindow):
             def run(self):
                 try:
                     generator = PDFGenerator()
-                    # Enable press_ready flag
                     generator.generate_pdf(self.book_id, self.output_path, press_ready=True, styles=self.styles)
                     self.finished.emit(True, self.output_path)
                 except Exception as e:
@@ -1194,88 +1065,6 @@ class MaktabaDashboard(QMainWindow):
             QMessageBox.information(self, "Success", f".maktaba file exported successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export: {str(e)}")
-
-    def load_audio_files(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "Select Audio Files", "", "Audio Files (*.mp3 *.wav *.m4a *.ogg)"
-        )
-        if files:
-            # Store full paths for processing
-            self.audio_file_paths = files 
-            self.audio_list_widget.clear()
-            for f in files:
-                self.audio_list_widget.addItem(os.path.basename(f))
-            self.statusBar().showMessage(f"Loaded {len(files)} audio files", 3000)
-
-    def stitch_audio_files(self):
-        if not hasattr(self, 'audio_file_paths') or not self.audio_file_paths:
-            QMessageBox.warning(self, "No Audio", "Please load audio files first!")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Merged Audio", "merged_audio.mp3", "MP3 Files (*.mp3)"
-        )
-        if not file_path:
-            return
-
-        self.statusBar().showMessage("Merging audio files...", 5000)
-
-        class AudioWorker(QThread):
-            finished = pyqtSignal(bool, str)
-            def __init__(self, full_paths, output_path, crossfade):
-                super().__init__()
-                self.full_paths = full_paths
-                self.output_path = output_path
-                self.crossfade = crossfade
-            def run(self):
-                try:
-                    processor = AudioProcessor()
-                    processor.process_chapters(self.full_paths, self.output_path, self.crossfade)
-                    self.finished.emit(True, self.output_path)
-                except Exception as e:
-                    self.finished.emit(False, str(e))
-
-        self.audio_worker = AudioWorker(self.audio_file_paths, file_path, self.crossfade_ms.value())
-        self.audio_worker.finished.connect(self.on_audio_stitch_finished)
-        self.audio_worker.start()
-
-    def on_audio_stitch_finished(self, success, message):
-        if success:
-            self.statusBar().showMessage(f"Audio merged: {message}", 5000)
-            QMessageBox.information(self, "Success", f"Audio merged successfully!")
-        else:
-            QMessageBox.critical(self, "Error", f"Failed: {message}")
-
-    def normalize_audio(self):
-        if not hasattr(self, 'audio_file_paths') or not self.audio_file_paths:
-            QMessageBox.warning(self, "No Audio", "Please load audio files first!")
-            return
-            
-        self.statusBar().showMessage(f"Normalizing {len(self.audio_file_paths)} files to {self.target_lufs.value()} LUFS...", 5000)
-
-        class NormalizedAudioWorker(QThread):
-            finished = pyqtSignal(bool, str)
-            def __init__(self, full_paths, target_lufs):
-                super().__init__()
-                self.full_paths = full_paths
-                self.target_lufs = target_lufs
-            def run(self):
-                try:
-                    processor = AudioProcessor(target_lufs=self.target_lufs)
-                    os.makedirs("output/normalized", exist_ok=True)
-                    for f in self.full_paths:
-                        if os.path.exists(f):
-                            audio = AudioSegment.from_file(f)
-                            normalized = processor.normalize_audio(audio)
-                            out_path = f"output/normalized/{os.path.basename(f)}"
-                            normalized.export(out_path, format="mp3")
-                    self.finished.emit(True, "output/normalized")
-                except Exception as e:
-                    self.finished.emit(False, str(e))
-
-        self.norm_worker = NormalizedAudioWorker(self.audio_file_paths, self.target_lufs.value())
-        self.norm_worker.finished.connect(lambda success, msg: QMessageBox.information(self, "Success", f"Files normalized in: {msg}") if success else QMessageBox.critical(self, "Error", msg))
-        self.norm_worker.start()
 
 def main():
     app = QApplication(sys.argv)

@@ -1,91 +1,151 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>{{ book_title }}</title>
-    <link rel="stylesheet" href="style.css">
     <style>
+        /* BASE PRINT SETTINGS FOR WEASYPRINT (A5 Size, 300 DPI target) */
         @page {
+            size: A5;
             margin-top: {{ margins.top }}mm;
             margin-bottom: {{ margins.bottom }}mm;
             margin-left: {{ margins.left }}mm;
             margin-right: {{ margins.right }}mm;
-            {% if margins.gutter %}
-            @page :left { margin-left: {{ margins.left + margins.gutter }}mm; }
-            @page :right { margin-right: {{ margins.right + margins.gutter }}mm; }
-            {% endif %}
+            @bottom-center {
+                content: counter(page);
+                font-size: 10pt;
+                font-family: sans-serif;
+                color: #555;
+            }
         }
-        
-        .chapter {
-            {% if theme_border_image %}
-            border: 20pt solid transparent;
-            border-image: url('{{ theme_border_image }}') 30 stretch;
-            padding: 10pt;
-            {% endif %}
+
+        /* DAY THEMES (Dalail Requirements) */
+        .theme-Monday { border: 3px solid #185FA5; }
+        .theme-Tuesday { border: 3px solid #0F6E56; }
+        .theme-Wednesday { border: 3px solid #854F0B; }
+        .theme-Thursday { border: 3px solid #534AB7; }
+        .theme-Friday { border: 3px solid #BA7517; } /* Gold */
+        .theme-Saturday { border: 3px solid #5F5E5A; }
+        .theme-Sunday { border: 3px solid #993556; }
+        .theme-All { border: 1px solid #ccc; }
+
+        body {
+            font-family: sans-serif;
+            background-color: #ffffff;
+            color: #000000;
         }
-        
-        .arabic { font-family: '{{ fonts.arabic }}', serif; font-size: {{ fonts.arabic_size }}pt; }
-        .urdu { font-family: '{{ fonts.urdu }}', serif; font-size: {{ fonts.urdu_size }}pt; }
-        .gujarati { font-family: '{{ fonts.gujarati }}', serif; font-size: {{ fonts.gujarati_size }}pt; }
+
+        .chapter-title {
+            text-align: center;
+            font-size: 22pt;
+            font-weight: bold;
+            margin-top: 20px;
+            margin-bottom: 30px;
+            page-break-before: always;
+            color: #333;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 10px;
+        }
+
+        .content-block {
+            margin-bottom: 25px;
+            padding: 15px;
+            border-radius: 8px;
+            page-break-inside: avoid; /* Prevent block breaking across pages */
+        }
+
+        /* ROW 1: ARABIC */
+        .row-ar {
+            font-family: '{{ fonts.arabic }}', serif;
+            font-size: {{ fonts.arabic_size }}pt;
+            direction: rtl;
+            text-align: right;
+            line-height: 1.8;
+            color: #000;
+            border-right: 3px solid #EF9F27; /* Amber border */
+            padding-right: 15px;
+            margin-bottom: 10px;
+        }
+
+        /* ROW 2: URDU */
+        .row-ur {
+            font-family: '{{ fonts.urdu }}', serif;
+            font-size: {{ fonts.urdu_size }}pt;
+            direction: rtl;
+            text-align: right;
+            line-height: 1.6;
+            color: #333;
+            border-right: 3px solid #1D9E75; /* Teal border */
+            padding-right: 15px;
+            margin-bottom: 8px;
+        }
+
+        /* ROW 3: GUJARATI */
+        .row-gu {
+            font-family: '{{ fonts.gujarati }}', sans-serif;
+            font-size: {{ fonts.gujarati_size }}pt;
+            direction: ltr;
+            text-align: left;
+            color: #444;
+            font-style: italic;
+            border-left: 3px solid #7F77DD; /* Purple border */
+            padding-left: 15px;
+            margin-bottom: 6px;
+        }
+
+        /* ROW 4: HINGLISH */
+        .row-hn {
+            font-family: sans-serif;
+            font-size: 11pt;
+            direction: ltr;
+            text-align: left;
+            color: #666;
+            border-left: 3px solid #1D9E75;
+            padding-left: 15px;
+        }
+
+        .reference-tag {
+            font-size: 8pt;
+            color: #999;
+            text-align: right;
+            margin-top: 5px;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
-    <div class="front-page">
-        <h1 class="book-title">{{ book_title }}</h1>
-        <h2 class="book-author">{{ author }}</h2>
-    </div>
-
-    <div id="toc">
-        <h2 class="toc-header">Table of Contents</h2>
-        <ul>
-            {% for chapter in chapters %}
-            <li>
-                <a href="#chapter-{{ loop.index }}">
-                    {{ chapter.chapter_title }}
-                </a>
-            </li>
-            {% endfor %}
-        </ul>
-    </div>
 
     {% for chapter in chapters %}
-    <div class="chapter" id="chapter-{{ loop.index }}">
-        <h2 class="chapter-title">{{ chapter.chapter_title }}</h2>
+        <div class="chapter-title">{{ chapter.chapter_title }}</div>
         
         {% for block in chapter.blocks %}
-        <div class="content-block side-by-side {{ block.content_type }}">
-            {% if block.content_data.ar %}
-            <p class="arabic">
-                {{ block.content_data.ar }}
-                {% for fn in block.footnotes %}
-                <span class="footnote">{{ fn.content.ar }}</span>
-                {% endfor %}
-            </p>
-            {% endif %}
+            <!-- Block with dynamic theme based on JSON Metadata -->
+            {% set day_theme = block.content_data.metadata.day.split(' ')[0] if block.content_data.metadata else 'All' %}
             
-            {% if block.content_data.ur %}
-            <p class="urdu">
-                {{ block.content_data.ur }}
-                {% for fn in block.footnotes %}
-                <span class="footnote">{{ fn.content.ur }}</span>
-                {% endfor %}
-            </p>
-            {% endif %}
-            
-            {% if block.content_data.en %}
-            <p class="english">{{ block.content_data.en }}</p>
-            {% endif %}
+            <div class="content-block theme-{{ day_theme }}">
+                <!-- Render rows only if they have content -->
+                {% if block.content_data.ar %}
+                    <div class="row-ar">{{ block.content_data.ar }}</div>
+                {% endif %}
+                
+                {% if block.content_data.ur %}
+                    <div class="row-ur">{{ block.content_data.ur }}</div>
+                {% endif %}
+                
+                {% if block.content_data.guj %}
+                    <div class="row-gu">{{ block.content_data.guj }}</div>
+                {% endif %}
+                
+                {% if block.content_data.en %}
+                    <div class="row-hn">{{ block.content_data.en }}</div>
+                {% endif %}
 
-            {% if block.content_data.guj %}
-            <p class="gujarati">{{ block.content_data.guj }}</p>
-            {% endif %}
-
-            {% if block.content_data.reference %}
-            <p class="reference">[{{ block.content_data.reference }}]</p>
-            {% endif %}
-        </div>
+                {% if block.content_data.reference %}
+                    <div class="reference-tag">Ref: {{ block.content_data.reference }}</div>
+                {% endif %}
+            </div>
         {% endfor %}
-    </div>
     {% endfor %}
+
 </body>
 </html>

@@ -1,0 +1,18 @@
+{
+  "1_Monday_Full": {
+    "tracks": ["T1.mp3", "T2.mp3", "T3.mp3", "T10.mp3"],
+    "crossfade": 1500
+  },
+  "2_Tuesday_Full": {
+    "tracks": ["T1.mp3", "T4.mp3", "T10.mp3"],
+    "crossfade": 1500
+  },
+  "3_Wednesday_Full": {
+    "tracks": ["T1.mp3", "T5.mp3", "T10.mp3"],
+    "crossfade": 1500
+  },
+  "7_Sunday_Full_Special": {
+    "tracks": ["T1.mp3", "T9.mp3", "T10.mp3"],
+    "crossfade": 2000
+  }
+}
