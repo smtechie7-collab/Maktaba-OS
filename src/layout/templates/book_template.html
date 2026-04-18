@@ -4,147 +4,137 @@
     <meta charset="UTF-8">
     <title>{{ book_title }}</title>
     <style>
-        /* BASE PRINT SETTINGS FOR WEASYPRINT (A5 Size, 300 DPI target) */
+        /* --- PRESS-READY PRINT SETTINGS --- */
         @page {
             size: A5;
             margin-top: {{ margins.top }}mm;
             margin-bottom: {{ margins.bottom }}mm;
             margin-left: {{ margins.left }}mm;
             margin-right: {{ margins.right }}mm;
-            @bottom-center {
-                content: counter(page);
-                font-size: 10pt;
-                font-family: sans-serif;
-                color: #555;
-            }
+            
+            {% if press_ready %}
+            /* Enables professional cutting marks and 3mm bleed for printing press */
+            marks: crop cross;
+            bleed: 3mm;
+            {% endif %}
+            
+            @bottom-center { content: counter(page); font-size: 10pt; color: #555; }
         }
 
-        /* DAY THEMES (Dalail Requirements) */
+        body { font-family: sans-serif; background-color: #ffffff; color: #000000; }
+        a { text-decoration: none; color: inherit; }
+
+        /* --- THE COVER PAGE DESIGN --- */
+        .cover-page {
+            page-break-before: always; text-align: center;
+            border: 8px solid #185FA5; padding: 40px; background-color: #FDFDFD;
+            min-height: 80vh; display: block;
+        }
+        .cover-page h1 { font-size: 38pt; color: #185FA5; margin-top: 10%; margin-bottom: 20px;}
+        .cover-page h2 { font-size: 24pt; color: #333; font-family: '{{ fonts.arabic }}'; margin-top:30px;}
+        .cover-page h3 { font-size: 16pt; color: #555; margin-top: 10px; font-style: italic;}
+
+        /* --- QR CODE AUDIO BOX (Low IQ Audience UX) --- */
+        .qr-box {
+            text-align: center; margin: 20px auto 40px auto;
+            padding: 10px; border: 2px dashed #888;
+            border-radius: 8px; width: 180px; background-color: #FAFAFA;
+        }
+        .qr-box img { width: 100px; height: 100px; }
+        .qr-box p { font-size: 10pt; font-weight: bold; color: #0066CC; margin-top: 5px; margin-bottom: 0;}
+
+        /* --- CHAPTER TITLE --- */
+        .chapter-title {
+            text-align: center; font-size: 22pt; font-weight: bold;
+            margin-top: 20px; margin-bottom: 10px; page-break-before: always;
+            color: #333; border-bottom: 2px solid #ccc; padding-bottom: 10px;
+        }
+
+        /* --- CONTENT BLOCKS --- */
+        .content-block {
+            margin-bottom: 25px; padding: 15px; border-radius: 8px;
+            page-break-inside: avoid; border: 1px solid transparent;
+        }
+        .content-block:hover { background-color: #f0f8ff; border: 1px dashed #0066cc; }
+
         .theme-Monday { border: 3px solid #185FA5; }
         .theme-Tuesday { border: 3px solid #0F6E56; }
         .theme-Wednesday { border: 3px solid #854F0B; }
         .theme-Thursday { border: 3px solid #534AB7; }
-        .theme-Friday { border: 3px solid #BA7517; } /* Gold */
+        .theme-Friday { border: 3px solid #BA7517; }
         .theme-Saturday { border: 3px solid #5F5E5A; }
         .theme-Sunday { border: 3px solid #993556; }
         .theme-All { border: 1px solid #ccc; }
 
-        body {
-            font-family: sans-serif;
-            background-color: #ffffff;
-            color: #000000;
-        }
-
-        .chapter-title {
-            text-align: center;
-            font-size: 22pt;
-            font-weight: bold;
-            margin-top: 20px;
-            margin-bottom: 30px;
-            page-break-before: always;
-            color: #333;
-            border-bottom: 2px solid #ccc;
-            padding-bottom: 10px;
-        }
-
-        .content-block {
-            margin-bottom: 25px;
-            padding: 15px;
-            border-radius: 8px;
-            page-break-inside: avoid; /* Prevent block breaking across pages */
-        }
-
-        /* ROW 1: ARABIC */
         .row-ar {
-            font-family: '{{ fonts.arabic }}', serif;
-            font-size: {{ fonts.arabic_size }}pt;
-            direction: rtl;
-            text-align: right;
-            line-height: 1.8;
-            color: #000;
-            border-right: 3px solid #EF9F27; /* Amber border */
-            padding-right: 15px;
-            margin-bottom: 10px;
+            font-family: '{{ fonts.arabic }}', serif; font-size: {{ fonts.arabic_size }}pt;
+            direction: rtl; text-align: right; line-height: 2.2;
+            color: #000; border-right: 3px solid #EF9F27; padding-right: 15px; margin-bottom: 10px;
         }
-
-        /* ROW 2: URDU */
         .row-ur {
-            font-family: '{{ fonts.urdu }}', serif;
-            font-size: {{ fonts.urdu_size }}pt;
-            direction: rtl;
-            text-align: right;
-            line-height: 1.6;
-            color: #333;
-            border-right: 3px solid #1D9E75; /* Teal border */
-            padding-right: 15px;
-            margin-bottom: 8px;
+            font-family: '{{ fonts.urdu }}', serif; font-size: {{ fonts.urdu_size }}pt;
+            direction: rtl; text-align: right; line-height: 1.8;
+            color: #333; border-right: 3px solid #1D9E75; padding-right: 15px; margin-bottom: 8px;
         }
-
-        /* ROW 3: GUJARATI */
         .row-gu {
-            font-family: '{{ fonts.gujarati }}', sans-serif;
-            font-size: {{ fonts.gujarati_size }}pt;
-            direction: ltr;
-            text-align: left;
-            color: #444;
-            font-style: italic;
-            border-left: 3px solid #7F77DD; /* Purple border */
-            padding-left: 15px;
-            margin-bottom: 6px;
+            font-family: '{{ fonts.gujarati }}', sans-serif; font-size: {{ fonts.gujarati_size }}pt;
+            direction: ltr; text-align: left; line-height: 1.4; color: #444; font-style: italic; border-left: 3px solid #7F77DD; padding-left: 15px; margin-bottom: 6px;
         }
-
-        /* ROW 4: HINGLISH */
         .row-hn {
-            font-family: sans-serif;
-            font-size: 11pt;
-            direction: ltr;
-            text-align: left;
-            color: #666;
-            border-left: 3px solid #1D9E75;
-            padding-left: 15px;
-        }
-
-        .reference-tag {
-            font-size: 8pt;
-            color: #999;
-            text-align: right;
-            margin-top: 5px;
-            font-style: italic;
+            font-family: sans-serif; font-size: 11pt; direction: ltr; text-align: left; line-height: 1.4; color: #666; border-left: 3px solid #1D9E75; padding-left: 15px;
         }
     </style>
 </head>
 <body>
 
     {% for chapter in chapters %}
-        <div class="chapter-title">{{ chapter.chapter_title }}</div>
         
-        {% for block in chapter.blocks %}
-            <!-- Block with dynamic theme based on JSON Metadata -->
-            {% set day_theme = block.content_data.metadata.day.split(' ')[0] if block.content_data.metadata else 'All' %}
-            
-            <div class="content-block theme-{{ day_theme }}">
-                <!-- Render rows only if they have content -->
-                {% if block.content_data.ar %}
-                    <div class="row-ar">{{ block.content_data.ar }}</div>
-                {% endif %}
+        <!-- COVER PAGE LOGIC -->
+        {% if chapter.chapter_type == 'Cover Page' %}
+            <div class="cover-page">
+                <h1>{{ chapter.chapter_title }}</h1>
                 
-                {% if block.content_data.ur %}
-                    <div class="row-ur">{{ block.content_data.ur }}</div>
-                {% endif %}
-                
-                {% if block.content_data.guj %}
-                    <div class="row-gu">{{ block.content_data.guj }}</div>
-                {% endif %}
-                
-                {% if block.content_data.en %}
-                    <div class="row-hn">{{ block.content_data.en }}</div>
+                <!-- Print Auto QR Code on Cover -->
+                {% if chapter.qr_code_base64 %}
+                <div class="qr-box">
+                    <img src="{{ chapter.qr_code_base64 }}" alt="Scan for Audio">
+                    <p>Scan to Listen 🎧</p>
+                </div>
                 {% endif %}
 
-                {% if block.content_data.reference %}
-                    <div class="reference-tag">Ref: {{ block.content_data.reference }}</div>
-                {% endif %}
+                {% for block in chapter.blocks %}
+                    <a href="block:{{ block.block_id }}">
+                        <h2>{{ block.content_data.ar }}</h2>
+                        <h3>{{ block.content_data.en }}</h3>
+                    </a>
+                {% endfor %}
             </div>
-        {% endfor %}
+        
+        <!-- NORMAL CHAPTER LOGIC -->
+        {% else %}
+            <div class="chapter-title">{{ chapter.chapter_title }}</div>
+            
+            <!-- Print Auto QR Code at the start of daily chapters -->
+            {% if chapter.qr_code_base64 %}
+            <div class="qr-box">
+                <img src="{{ chapter.qr_code_base64 }}" alt="Scan for Audio">
+                <p>Listen to {{ chapter.chapter_title }}</p>
+            </div>
+            {% endif %}
+
+            {% for block in chapter.blocks %}
+                {% set day_theme = block.content_data.metadata.day.split(' ')[0] if block.content_data.metadata else 'All' %}
+                <a href="block:{{ block.block_id }}">
+                    <div class="content-block theme-{{ day_theme }}">
+                        {% if block.content_data.ar %}<div class="row-ar">{{ block.content_data.ar }}</div>{% endif %}
+                        {% if block.content_data.ur %}<div class="row-ur">{{ block.content_data.ur }}</div>{% endif %}
+                        {% if block.content_data.guj %}<div class="row-gu">{{ block.content_data.guj }}</div>{% endif %}
+                        {% if block.content_data.en %}<div class="row-hn">{{ block.content_data.en }}</div>{% endif %}
+                    </div>
+                </a>
+            {% endfor %}
+        {% endif %}
+
     {% endfor %}
 
 </body>

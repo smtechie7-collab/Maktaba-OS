@@ -1,26 +1,40 @@
 import os
 import sys
 import json
+import base64
+from io import BytesIO
+import qrcode
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
+
+try:
+    from weasyprint import HTML, CSS
+except ImportError:
+    print("Warning: WeasyPrint not installed or GTK missing.")
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.data.database import DatabaseManager
-from src.utils.logger import setup_logger
-
-logger = setup_logger("PDFGenerator")
 
 class PDFGenerator:
     def __init__(self, template_dir="src/layout/templates", db_path="maktaba_production.db"):
         self.env = Environment(loader=FileSystemLoader(template_dir))
         self.template = self.env.get_template("book_template.html")
-        self.cover_template = self.env.get_template("cover_template.html")
         self.db = DatabaseManager(db_path)
 
+    def generate_qr_base64(self, data: str) -> str:
+        """Generates a QR Code and returns it as a Base64 PNG image string."""
+        qr = qrcode.QRCode(version=1, box_size=3, border=1)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return f"data:image/png;base64,{img_str}"
+
     def generate_pdf(self, book_id: int, output_path: str, include_cover: bool = True, press_ready: bool = False, styles: dict = None):
-        """Fetch book data and generate a PDF with optional custom styles."""
-        logger.info(f"Starting PDF generation for Book ID: {book_id} (Press-Ready: {press_ready})")
+        """Fetch book data and generate a PDF with Press-Ready Bleeds & Auto QR Codes."""
         
         # Set default styles if none provided
         if not styles:
@@ -30,8 +44,7 @@ class PDFGenerator:
                     "arabic": "Amiri", "arabic_size": 24,
                     "urdu": "Jameel Noori Nastaliq", "urdu_size": 20,
                     "gujarati": "Noto Sans Gujarati", "gujarati_size": 16
-                },
-                "theme_border_image": None
+                }
             }
 
         # 1. Fetch metadata
@@ -39,10 +52,7 @@ class PDFGenerator:
             cursor = conn.cursor()
             cursor.execute("SELECT title, author FROM Books WHERE id = ?", (book_id,))
             book_info = cursor.fetchone()
-            
-            if not book_info:
-                logger.error(f"Book with ID {book_id} not found.")
-                return
+            if not book_info: return
 
         # 2. Fetch content optimized
         content_blocks = self.db.get_book_content(book_id)
@@ -56,58 +66,54 @@ class PDFGenerator:
                 current_chapter_id = block['chapter_id']
                 current_chapter_dict = {
                     "chapter_title": block['chapter_title'],
-                    "blocks": []
+                    "chapter_type": block.get('chapter_type', 'Content Chapter'),
+                    "blocks": [],
+                    "qr_code_base64": "" # Placeholder for QR
                 }
                 chapters_data.append(current_chapter_dict)
             
-            current_chapter_dict['blocks'].append({
-                "content_data": json.loads(block['content_data']),
-                "content_type": block['content_type'],
-                "footnotes": block['footnotes']
-            })
+            if block['block_id']:
+                current_chapter_dict['blocks'].append({
+                    "block_id": block['block_id'],
+                    "content_data": json.loads(block['content_data']),
+                    "content_type": block['content_type']
+                })
 
-        # 3. Render Templates
-        full_html = ""
-        
-        # Add a wrapper for press-ready styles
-        press_class = "press-ready" if press_ready else ""
-        full_html += f'<div class="{press_class}">'
+        # 3. Auto Generate QR Codes based on Day/Track metadata
+        for chapter in chapters_data:
+            day_val = "All"
+            track_val = "T1"
+            if chapter['blocks']:
+                # Get metadata from the first block of the chapter
+                first_meta = chapter['blocks'][0].get('content_data', {}).get('metadata', {})
+                day_val = first_meta.get('day', 'All').split(' ')[0]
+                track_val = first_meta.get('track', 'T1')
+            
+            # Simulated Audio Link (Can be mapped to your YouTube/Cloud links later)
+            audio_link = f"https://dalail-audio.maktaba.local/listen?book={book_id}&day={day_val}&track={track_val}"
+            chapter['qr_code_base64'] = self.generate_qr_base64(audio_link)
 
-        if include_cover:
-            logger.info("Rendering cover page...")
-            full_html += self.cover_template.render(
-                book_title=book_info['title'],
-                author=book_info['author']
-            )
-            full_html += '<div style="page-break-after: always;"></div>'
-
-        logger.info("Rendering main content...")
-        full_html += self.template.render(
+        # 4. Render Templates
+        full_html = self.template.render(
             book_title=book_info['title'],
             author=book_info['author'],
             chapters=chapters_data,
             margins=styles.get("margins"),
             fonts=styles.get("fonts"),
-            theme_border_image=styles.get("theme_border_image")
+            press_ready=press_ready # Pass press_ready flag to CSS
         )
         
-        full_html += '</div>'
-
-        # 4. Generate PDF
+        # 5. Generate PDF
         base_url = os.path.dirname(os.path.abspath(__file__)) + "/templates/"
-        # For Press-Ready, we might need to adjust DPI or CMYK handling
-        # WeasyPrint handles DPI via resolution parameter in write_pdf
+        
         HTML(string=full_html, base_url=base_url).write_pdf(
             output_path, 
             presentational_hints=True,
-            # 300 DPI for press-ready
-            zoom=1.0 if not press_ready else 1.0 # WeasyPrint zoom is relative
+            zoom=1.0
         )
-        
-        logger.info(f"PDF successfully generated at: {output_path}")
+        print(f"PDF successfully generated at: {output_path}")
 
 if __name__ == "__main__":
     gen = PDFGenerator()
-    # Create output directory if it doesn't exist
     os.makedirs("output", exist_ok=True)
-    gen.generate_pdf(1, "output/riyad_as_salihin_sample.pdf")
+    gen.generate_pdf(1, "output/dalail_press_ready_test.pdf", press_ready=True)

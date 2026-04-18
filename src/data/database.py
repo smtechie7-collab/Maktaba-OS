@@ -11,7 +11,7 @@ from src.utils.logger import setup_logger
 logger = setup_logger("Database")
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "maktaba.db"):
+    def __init__(self, db_path: str = "maktaba_production.db"):
         self.db_path = db_path
         self._init_db()
 
@@ -50,14 +50,20 @@ class DatabaseManager:
                     FOREIGN KEY (book_id) REFERENCES Books (id) ON DELETE CASCADE
                 )
             ''')
+            
+            # --- V5.0 MIGRATION: Add chapter_type safely if it doesn't exist ---
+            try:
+                cursor.execute("ALTER TABLE Chapters ADD COLUMN chapter_type TEXT DEFAULT 'Content Chapter'")
+            except sqlite3.OperationalError:
+                pass # Column already exists, safe to ignore
 
             # 3. Content_Blocks Table (Hybrid JSON Storage)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS Content_Blocks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     chapter_id INTEGER,
-                    content_type TEXT DEFAULT 'text', -- text, image, audio
-                    content_data JSON NOT NULL,      -- Stores Arabic, Urdu, etc. in JSON
+                    content_type TEXT DEFAULT 'text',
+                    content_data JSON NOT NULL,
                     version INTEGER DEFAULT 1,
                     is_active BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -70,17 +76,15 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS Footnotes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     block_id INTEGER,
-                    marker TEXT,              -- e.g., "1", "*", "a"
-                    content JSON NOT NULL,    -- Multilingual footnote content
+                    marker TEXT,
+                    content JSON NOT NULL,
                     FOREIGN KEY (block_id) REFERENCES Content_Blocks (id) ON DELETE CASCADE
                 )
             ''')
             
             conn.commit()
-        logger.info("Database initialization complete.")
 
     def add_book(self, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> int:
-        """Add a new book to the database."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -89,18 +93,17 @@ class DatabaseManager:
             )
             return cursor.lastrowid
 
-    def add_chapter(self, book_id: int, title: str, sequence: int) -> int:
-        """Add a chapter to a book."""
+    def add_chapter(self, book_id: int, title: str, sequence: int, chapter_type: str = 'Content Chapter') -> int:
+        """Add a chapter with its specific anatomy type."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO Chapters (book_id, title, sequence_number) VALUES (?, ?, ?)",
-                (book_id, title, sequence)
+                "INSERT INTO Chapters (book_id, title, sequence_number, chapter_type) VALUES (?, ?, ?, ?)",
+                (book_id, title, sequence, chapter_type)
             )
             return cursor.lastrowid
 
     def add_content_block(self, chapter_id: int, content_data: Dict[str, Any], content_type: str = 'text') -> int:
-        """Add a content block (e.g., Arabic text with Urdu translation) in JSON format."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -110,7 +113,6 @@ class DatabaseManager:
             return cursor.lastrowid
 
     def add_footnote(self, block_id: int, content: Dict[str, Any], marker: str = None) -> int:
-        """Add a footnote linked to a content block."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -120,56 +122,41 @@ class DatabaseManager:
             return cursor.lastrowid
 
     def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
-        """Fetch all chapters and content for a specific book optimized to avoid N+1 queries."""
+        """Fetch all chapters and content, optimized. LEFT JOIN ensures empty chapters (like Covers) are loaded too."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
-            # 1. Fetch Chapters and Blocks in one go
             query = '''
-                SELECT c.id as chapter_id, c.title as chapter_title, 
+                SELECT c.id as chapter_id, c.title as chapter_title, c.chapter_type,
                        cb.id as block_id, cb.content_data, cb.content_type
                 FROM Chapters c
-                JOIN Content_Blocks cb ON c.id = cb.chapter_id
-                WHERE c.book_id = ? AND cb.is_active = 1
+                LEFT JOIN Content_Blocks cb ON c.id = cb.chapter_id AND cb.is_active = 1
+                WHERE c.book_id = ?
                 ORDER BY c.sequence_number ASC, cb.id ASC
             '''
             cursor.execute(query, (book_id,))
             blocks = [dict(row) for row in cursor.fetchall()]
             
-            if not blocks:
-                return []
+            if not blocks: return []
 
-            # 2. Fetch all Footnotes for all blocks in this book in ONE query
-            block_ids = [b['block_id'] for b in blocks]
-            placeholders = ', '.join(['?'] * len(block_ids))
-            fn_query = f"SELECT block_id, marker, content FROM Footnotes WHERE block_id IN ({placeholders})"
-            cursor.execute(fn_query, block_ids)
-            
-            # Map footnotes to their blocks
-            footnotes_map = {}
-            for fn in cursor.fetchall():
-                bid = fn['block_id']
-                if bid not in footnotes_map:
-                    footnotes_map[bid] = []
-                footnotes_map[bid].append({
-                    "marker": fn['marker'],
-                    "content": json.loads(fn['content'])
-                })
-            
-            # 3. Attach footnotes to blocks
-            for block in blocks:
-                block['footnotes'] = footnotes_map.get(block['block_id'], [])
+            # Attach footnotes
+            valid_block_ids = [b['block_id'] for b in blocks if b['block_id'] is not None]
+            if valid_block_ids:
+                placeholders = ', '.join(['?'] * len(valid_block_ids))
+                fn_query = f"SELECT block_id, marker, content FROM Footnotes WHERE block_id IN ({placeholders})"
+                cursor.execute(fn_query, valid_block_ids)
+                
+                footnotes_map = {}
+                for fn in cursor.fetchall():
+                    bid = fn['block_id']
+                    if bid not in footnotes_map: footnotes_map[bid] = []
+                    footnotes_map[bid].append({"marker": fn['marker'], "content": json.loads(fn['content'])})
+                
+                for block in blocks:
+                    if block['block_id']:
+                        block['footnotes'] = footnotes_map.get(block['block_id'], [])
+                    else:
+                        block['footnotes'] = []
+            else:
+                for block in blocks: block['footnotes'] = []
                 
             return blocks
-
-if __name__ == "__main__":
-    # Test initialization
-    db = DatabaseManager("test_maktaba.db")
-    book_id = db.add_book("Test Islamic Book", "Author Name", "ar")
-    chap_id = db.add_chapter(book_id, "Introduction", 1)
-    db.add_content_block(chap_id, {
-        "ar": "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-        "ur": "اللہ کے نام سے شروع جو بڑا مہربان نہایت رحم والا ہے",
-        "gu": "અલ્લાહના નામથી શરૂ જે ઘણો દયાળુ અને અત્યંત કૃપાળુ છે"
-    })
-    print(f"Sample data added to test_maktaba.db. Book ID: {book_id}")
