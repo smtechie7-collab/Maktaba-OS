@@ -16,7 +16,8 @@ def ingest_sample_data():
         title="Riyad as-Salihin (Sample Selection)",
         author="Imam an-Nawawi",
         language="multi",
-        metadata={"category": "Hadith", "publisher": "Maktaba-OS"}
+        category="Hadith",
+        publisher="Maktaba-OS"
     )
     logger.info(f"Created Book ID: {book_id}")
 

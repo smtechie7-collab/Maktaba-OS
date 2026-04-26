@@ -36,29 +36,31 @@ class AudioPanel(QWidget):
         super().__init__(parent)
         self.init_ui()
 
+    def update_btn_style(self, btn, obj_name):
+        btn.setObjectName(obj_name)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+
     def init_ui(self):
         layout = QVBoxLayout(self)
         
         header = QLabel("🎚️ Visual Audio Router (Timeline)")
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0066CC; margin-bottom: 10px;")
+        header.setObjectName("panelHeader")
         layout.addWidget(header)
 
         # --- SETTINGS BAR ---
         settings_group = QGroupBox("Master Export Settings")
-        settings_group.setStyleSheet("QGroupBox { border: 2px solid #A0A0A0; border-radius: 6px; font-weight: bold; color: #000; } QGroupBox::title { color: #0066CC; left: 10px; padding: 0 5px; }")
         settings_layout = QHBoxLayout()
         
         self.crossfade_spn = QSpinBox()
         self.crossfade_spn.setRange(0, 5000)
         self.crossfade_spn.setValue(1500)
         self.crossfade_spn.setSuffix(" ms")
-        self.crossfade_spn.setStyleSheet("background: #FFF; border: 2px solid #A0A0A0; padding: 4px; border-radius: 3px; font-weight: bold;")
         
         self.lufs_spn = QSpinBox()
         self.lufs_spn.setRange(-30, -5)
         self.lufs_spn.setValue(-16)
         self.lufs_spn.setSuffix(" LUFS")
-        self.lufs_spn.setStyleSheet("background: #FFF; border: 2px solid #A0A0A0; padding: 4px; border-radius: 3px; font-weight: bold;")
 
         settings_layout.addWidget(QLabel("<b>Crossfade (Overlap):</b>"))
         settings_layout.addWidget(self.crossfade_spn)
@@ -68,8 +70,8 @@ class AudioPanel(QWidget):
         settings_layout.addStretch()
         
         self.save_recipe_btn = QPushButton("💾 Save as JSON Recipe")
+        self.save_recipe_btn.setObjectName("secondaryBtn")
         self.save_recipe_btn.clicked.connect(self.export_json_recipe)
-        self.save_recipe_btn.setStyleSheet("background-color: #E5E7EB; color: #000; font-weight: bold; padding: 6px; border: 1px solid #9CA3AF;")
         settings_layout.addWidget(self.save_recipe_btn)
 
         settings_group.setLayout(settings_layout)
@@ -86,7 +88,7 @@ class AudioPanel(QWidget):
         lib_header = QHBoxLayout()
         lib_header.addWidget(QLabel("<b>📂 Audio Library (Source)</b>"))
         add_lib_btn = QPushButton("+ Add Files")
-        add_lib_btn.setStyleSheet("background-color: #0066CC; color: #FFF; font-weight: bold; border-radius: 3px; padding: 4px;")
+        add_lib_btn.setObjectName("primaryBtn")
         add_lib_btn.clicked.connect(self.load_library_files)
         lib_header.addWidget(add_lib_btn)
         lib_layout.addLayout(lib_header)
@@ -94,11 +96,7 @@ class AudioPanel(QWidget):
         self.library_list = QListWidget()
         self.library_list.setDragEnabled(True) # Can drag items out of here
         self.library_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.library_list.setStyleSheet("""
-            QListWidget { background-color: #FFFFFF; border: 2px solid #A0A0A0; border-radius: 4px; }
-            QListWidget::item { padding: 8px; border-bottom: 1px solid #E5E7EB; color: #000; font-weight: bold; }
-            QListWidget::item:selected { background-color: #E5E7EB; color: #0066CC; border-left: 4px solid #0066CC; }
-        """)
+        self.library_list.setObjectName("libraryList")
         lib_layout.addWidget(self.library_list)
         splitter.addWidget(lib_widget)
 
@@ -110,7 +108,7 @@ class AudioPanel(QWidget):
         tl_header = QHBoxLayout()
         tl_header.addWidget(QLabel("<b>🎞️ Visual Timeline (Drag & Drop here)</b>"))
         clear_tl_btn = QPushButton("🗑️ Clear Timeline")
-        clear_tl_btn.setStyleSheet("background-color: #DC2626; color: #FFF; font-weight: bold; border-radius: 3px; padding: 4px;")
+        clear_tl_btn.setObjectName("dangerBtn")
         clear_tl_btn.clicked.connect(self.clear_timeline)
         tl_header.addWidget(clear_tl_btn)
         tl_layout.addLayout(tl_header)
@@ -124,18 +122,7 @@ class AudioPanel(QWidget):
         self.timeline_list.setDragEnabled(True)
         self.timeline_list.setViewportMargins(10, 10, 10, 10)
         self.timeline_list.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.timeline_list.setStyleSheet("""
-            QListWidget { 
-                background-color: #1E1E1E; /* Dark timeline background */
-                border: 2px solid #A0A0A0; border-radius: 4px; 
-            }
-            QListWidget::item { 
-                background-color: #0066CC; color: white; 
-                padding: 15px; border-radius: 6px; font-weight: bold; 
-                min-width: 100px; text-align: center;
-            }
-            QListWidget::item:selected { background-color: #0052A3; border: 2px solid #FFF; }
-        """)
+        self.timeline_list.setObjectName("timelineList")
         tl_layout.addWidget(self.timeline_list)
         splitter.addWidget(tl_widget)
 
@@ -145,7 +132,7 @@ class AudioPanel(QWidget):
 
         # --- BUILD BUTTON ---
         self.build_btn = QPushButton("🎧 Build Final Audio Track (Export to MP3)")
-        self.build_btn.setStyleSheet("background-color: #0066CC; color: white; font-size: 16px; font-weight: bold; padding: 12px; border-radius: 6px;")
+        self.build_btn.setObjectName("buildBtn")
         self.build_btn.clicked.connect(self.build_timeline_audio)
         layout.addWidget(self.build_btn)
 
@@ -215,7 +202,7 @@ class AudioPanel(QWidget):
 
         self.build_btn.setEnabled(False)
         self.build_btn.setText("Processing Audio... Please wait (This may take a while)")
-        self.build_btn.setStyleSheet("background-color: #D97706; color: white; font-size: 16px; font-weight: bold; padding: 12px; border-radius: 6px;")
+        self.update_btn_style(self.build_btn, "buildBtnProcessing")
 
         self.worker = VisualAudioWorker(
             file_paths=paths, 
@@ -229,7 +216,7 @@ class AudioPanel(QWidget):
     def on_build_finished(self, success, message):
         self.build_btn.setEnabled(True)
         self.build_btn.setText("🎧 Build Final Audio Track (Export to MP3)")
-        self.build_btn.setStyleSheet("background-color: #0066CC; color: white; font-size: 16px; font-weight: bold; padding: 12px; border-radius: 6px;")
+        self.update_btn_style(self.build_btn, "buildBtn")
         
         if success:
             QMessageBox.information(self, "Success", f"Audio Mix successfully exported to:\n{message}")

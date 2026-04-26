@@ -3,32 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <title>{{ book_title }}</title>
+    
+    <!-- External JS for 3D Page Flipping (Studio Only) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
+
     <style>
-        /* --- PRESS-READY PRINT SETTINGS --- */
-        @page {
-            size: A5;
-            margin-top: {{ margins.top }}mm;
-            margin-bottom: {{ margins.bottom }}mm;
-            margin-left: {{ margins.left }}mm;
-            margin-right: {{ margins.right }}mm;
+        /* =========================================================
+           1. WEASYPRINT / PDF PRINT STYLES (Strictly for PDF Export)
+           ========================================================= */
+        @media print {
+            @page {
+                size: A5;
+                margin-top: {{ margins.top }}mm;
+                margin-bottom: {{ margins.bottom }}mm;
+                margin-left: {{ margins.left }}mm;
+                margin-right: {{ margins.right }}mm;
+                
+                {% if press_ready %}
+                /* Enables professional cutting marks and 3mm bleed for printing press */
+                marks: crop cross;
+                bleed: 3mm;
+                {% endif %}
+                
+                @bottom-center { content: counter(page); font-size: 10pt; color: #555; }
+            }
+            body { font-family: sans-serif; background-color: #ffffff; color: #000000; }
+            .cover-page { page-break-before: always; }
+            .chapter-title { page-break-before: always; }
             
-            {% if press_ready %}
-            /* Enables professional cutting marks and 3mm bleed for printing press */
-            marks: crop cross;
-            bleed: 3mm;
-            {% endif %}
-            
-            @bottom-center { content: counter(page); font-size: 10pt; color: #555; }
+            /* Override Turn.js logic for Print */
+            #flipbook, #flipbook .page, #flipbook .hard {
+                display: block !important; width: auto !important; height: auto !important;
+                position: static !important; overflow: visible !important; transform: none !important;
+            }
+            .page-content { overflow: visible !important; height: auto !important; }
         }
 
-        body { font-family: sans-serif; background-color: #ffffff; color: #000000; }
-        a { text-decoration: none; color: inherit; }
+        /* =========================================================
+           2. INTERACTIVE 3D SCREEN STYLES (Studio Preview Mode)
+           ========================================================= */
+        @media screen {
+            body {
+                background-color: #2D3748; /* Dark studio background */
+                color: #1A202C; font-family: sans-serif; padding: 40px 0;
+                display: flex; flex-direction: column; align-items: center;
+                overflow-x: hidden;
+            }
+            
+            /* Turn.js Wrapper */
+            #flipbook-wrapper {
+                display: flex; justify-content: center; align-items: center;
+                margin-top: 20px; perspective: 2000px;
+            }
+            
+            #flipbook {
+                box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            }
+            
+            /* Hardcover Styling */
+            .hard {
+                background-color: #1a202c; color: white;
+                box-shadow: inset 4px 0 10px rgba(0,0,0,0.4);
+            }
+            .cover-front { border-radius: 2px 12px 12px 2px; border-left: 8px solid #0d1117; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px;}
+            .cover-back { border-radius: 12px 2px 2px 12px; border-right: 8px solid #0d1117; }
+            .inside-cover { background-color: #2D3748; }
+            
+            /* Soft Page Styling */
+            .soft-page {
+                background-color: #FAFAFA; color: #1A202C;
+                box-shadow: inset 0 0 20px rgba(0,0,0,0.05);
+            }
+            
+            /* Content Area with Custom Scrollbar for long chapters */
+            .page-content {
+                padding: 40px 50px; height: 100%; overflow-y: auto; overflow-x: hidden;
+                box-sizing: border-box;
+            }
+            
+            /* Scrollbar styling for a cleaner look */
+            .page-content::-webkit-scrollbar { width: 6px; }
+            .page-content::-webkit-scrollbar-track { background: transparent; }
+            .page-content::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+            .page-content::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+            
+            }
+            
+            /* WYSIWYG Editable Blocks */
+            .content-block {
+                transition: all 0.2s ease-in-out; position: relative;
+            }
+            .editable-text {
+                padding: 4px; border-radius: 4px; outline: none; border: 1px solid transparent;
+            }
+            .editable-text:hover { border: 1px dashed #A0AEC0; cursor: text; background: rgba(255,255,255,0.8); }
+            .editable-text:focus { border: 2px solid #3182CE; background: #FFF; cursor: text; }
+            
+            /* Save Indicator Animation */
+            .save-badge {
+                position: absolute; right: -70px; top: 10px; background: #38A169; color: white;
+                font-size: 11px; padding: 4px 8px; border-radius: 4px; font-weight: bold;
+                opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            }
+        }
 
-        /* --- THE COVER PAGE DESIGN --- */
+        /* =========================================================
+           3. SHARED CORE STYLES (Both Print & Screen)
+           ========================================================= */
         .cover-page {
-            page-break-before: always; text-align: center;
             border: 8px solid #185FA5; padding: 40px; background-color: #FDFDFD;
-            min-height: 80vh; display: block;
+            min-height: 80vh; display: block; text-align: center;
         }
         .cover-page h1 { font-size: 38pt; color: #185FA5; margin-top: 10%; margin-bottom: 20px;}
         .cover-page h2 { font-size: 24pt; color: #333; font-family: '{{ fonts.arabic }}'; margin-top:30px;}
@@ -46,16 +131,17 @@
         /* --- CHAPTER TITLE --- */
         .chapter-title {
             text-align: center; font-size: 22pt; font-weight: bold;
-            margin-top: 20px; margin-bottom: 10px; page-break-before: always;
+            margin-top: 20px; margin-bottom: 10px; 
             color: #333; border-bottom: 2px solid #ccc; padding-bottom: 10px;
         }
 
         /* --- CONTENT BLOCKS --- */
         .content-block {
-            margin-bottom: 25px; padding: 15px; border-radius: 8px;
+            margin-bottom: 25px; padding: 15px; border-radius: 8px; background-color: #fff;
             page-break-inside: avoid; border: 1px solid transparent;
         }
         .content-block:hover { background-color: #f0f8ff; border: 1px dashed #0066cc; }
+        .content-block-draft { border: 2px dashed #D32F2F !important; background-color: #FFF8F8 !important; opacity: 0.8; }
 
         .theme-Monday { border: 3px solid #185FA5; }
         .theme-Tuesday { border: 3px solid #0F6E56; }
@@ -83,9 +169,41 @@
         .row-hn {
             font-family: sans-serif; font-size: 11pt; direction: ltr; text-align: left; line-height: 1.4; color: #666; border-left: 3px solid #1D9E75; padding-left: 15px;
         }
+
+        /* --- GLOBAL BOOK HEADER --- */
+        .global-book-header {
+            text-align: center; margin-bottom: 50px; padding-bottom: 20px; border-bottom: 2px solid #E2E8F0;
+        }
+        .book-cover-img {
+            max-height: 450px; max-width: 100%; border-radius: 4px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); margin-bottom: 20px;
+        }
+        .main-book-title {
+            font-size: 2.8em; color: #2D3748; margin-bottom: 5px; font-weight: 800; font-family: '{{ fonts.arabic }}', serif;
+        }
+        .main-book-author {
+            font-size: 1.3em; color: #718096; margin-top: 0; font-style: italic;
+        }
+        @media print {
+            .global-book-header { page-break-after: always; border-bottom: none; }
+        }
     </style>
 </head>
 <body>
+
+    <!-- 3D Book Container for Screen -->
+    <div class="book-container">
+        
+        <!-- Main Book Header (Cover, Title, Author) -->
+        <div class="global-book-header">
+            {% if book_metadata and book_metadata.cover_image %}
+                <!-- Replace backslashes for safe local file URL rendering -->
+                <img src="file:///{{ book_metadata.cover_image | replace('\\', '/') }}" alt="Book Cover" class="book-cover-img" />
+            {% endif %}
+            <h1 class="main-book-title">{{ book_title }}</h1>
+            {% if author %}
+                <h3 class="main-book-author">By: {{ author }}</h3>
+            {% endif %}
+        </div>
 
     {% for chapter in chapters %}
         
@@ -103,10 +221,11 @@
                 {% endif %}
 
                 {% for block in chapter.blocks %}
-                    <a href="block:{{ block.block_id }}">
-                        <h2>{{ block.content_data.ar }}</h2>
-                        <h3>{{ block.content_data.en }}</h3>
-                    </a>
+                    <div class="content-block {% if block.block_id == 'draft' %}content-block-draft{% endif %}">
+                        {% if block.content_data.ar %}<h2 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)">{{ block.content_data.ar }}</h2>{% endif %}
+                        {% if block.content_data.en %}<h3 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)">{{ block.content_data.en }}</h3>{% endif %}
+                        <div class="save-badge" id="badge-{{ block.block_id }}">Saved ✓</div>
+                    </div>
                 {% endfor %}
             </div>
         
@@ -124,18 +243,55 @@
 
             {% for block in chapter.blocks %}
                 {% set day_theme = block.content_data.metadata.day.split(' ')[0] if block.content_data.metadata else 'All' %}
-                <a href="block:{{ block.block_id }}">
-                    <div class="content-block theme-{{ day_theme }}">
-                        {% if block.content_data.ar %}<div class="row-ar">{{ block.content_data.ar }}</div>{% endif %}
-                        {% if block.content_data.ur %}<div class="row-ur">{{ block.content_data.ur }}</div>{% endif %}
-                        {% if block.content_data.guj %}<div class="row-gu">{{ block.content_data.guj }}</div>{% endif %}
-                        {% if block.content_data.en %}<div class="row-hn">{{ block.content_data.en }}</div>{% endif %}
-                    </div>
-                </a>
+                <div class="content-block theme-{{ day_theme }} {% if block.block_id == 'draft' %}content-block-draft{% endif %}">
+                    {% if block.content_data.ar %}<div class="row-ar editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ar }}</div>{% endif %}
+                    {% if block.content_data.ur %}<div class="row-ur editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ur', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ur }}</div>{% endif %}
+                    {% if block.content_data.guj %}<div class="row-gu editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'guj', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.guj }}</div>{% endif %}
+                    {% if block.content_data.en %}<div class="row-hn editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.en }}</div>{% endif %}
+                    <div class="save-badge" id="badge-{{ block.block_id }}">Saved ✓</div>
+                </div>
             {% endfor %}
         {% endif %}
 
     {% endfor %}
+    </div>
+
+    <!-- WebBridge JavaScript Logic -->
+    <script>
+        function notifySelection(blockId) {
+            if (blockId && blockId !== 'draft') {
+                if (window.pybridge) { window.pybridge.on_block_clicked(parseInt(blockId)); }
+            }
+        }
+        
+        function saveEdit(blockId, lang, element) {
+            if (blockId && blockId !== 'draft' && window.pybridge) {
+                let newText = element.innerText.trim();
+                window.pybridge.on_block_edited(parseInt(blockId), lang, newText);
+                
+                // Show little green saved badge
+                let badge = document.getElementById('badge-' + blockId);
+                if(badge) {
+                    badge.style.opacity = '1';
+                    setTimeout(() => { badge.style.opacity = '0'; }, 2000);
+                }
+            }
+        }
+        
+        // Initialize Turn.js 3D Flipbook (Only runs on Screen, ignored by WeasyPrint)
+        $(window).on('load', function() {
+            if (window.matchMedia('screen').matches) {
+                $('#flipbook').turn({
+                    width: 1000,
+                    height: 700,
+                    elevation: 50,
+                    gradients: true,
+                    autoCenter: true,
+                    duration: 1000
+                });
+            }
+        });
+    </script>
 
 </body>
 </html>

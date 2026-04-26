@@ -13,7 +13,7 @@ from src.utils.logger import setup_logger
 logger = setup_logger("Database")
 
 class DatabaseManager:
-    CURRENT_SCHEMA_VERSION = 3
+    CURRENT_SCHEMA_VERSION = 4
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = str(Path(db_path).expanduser().resolve()) if db_path else str(database_path())
@@ -55,6 +55,7 @@ class DatabaseManager:
             (1, "initial_schema", self._migration_001_initial_schema),
             (2, "add_chapter_type", self._migration_002_add_chapter_type),
             (3, "add_block_sequence", self._migration_003_add_block_sequence),
+            (4, "add_book_metadata_fields", self._migration_004_add_book_metadata_fields),
         ]
         current_version = self._schema_version(conn)
 
@@ -128,49 +129,59 @@ class DatabaseManager:
         if "sequence_number" not in columns:
             conn.execute("ALTER TABLE Content_Blocks ADD COLUMN sequence_number INTEGER DEFAULT 0")
             conn.execute("""
-                UPDATE Content_Blocks
-                SET sequence_number = id
-                WHERE sequence_number IS NULL OR sequence_number = 0
+                UPDATE Content_Blocks SET sequence_number = id WHERE sequence_number IS NULL OR sequence_number = 0
             """)
 
-    def add_book(self, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> int:
+    def _migration_004_add_book_metadata_fields(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(Books)").fetchall()
+        }
+        if "publisher" not in columns:
+            conn.execute("ALTER TABLE Books ADD COLUMN publisher TEXT")
+        if "category" not in columns:
+            conn.execute("ALTER TABLE Books ADD COLUMN category TEXT")
+        if "notes" not in columns:
+            conn.execute("ALTER TABLE Books ADD COLUMN notes TEXT")
+
+    def add_book(self, title: str, author: str = None, language: str = 'en', publisher: str = None, category: str = None, notes: str = None, metadata: Dict = None) -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO Books (title, author, language, metadata) VALUES (?, ?, ?, ?)",
-                (title, author, language, json.dumps(metadata) if metadata else None)
+                "INSERT INTO Books (title, author, language, publisher, category, notes, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (title, author, language, publisher, category, notes, json.dumps(metadata) if metadata else None)
             )
             return cursor.lastrowid
+
+    def update_book(self, book_id: int, title: str, author: str = None, language: str = 'en', publisher: str = None, category: str = None, notes: str = None, metadata: Dict = None) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE Books
+                SET title = ?, author = ?, language = ?, publisher = ?, category = ?, notes = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (title, author, language, publisher, category, notes, json.dumps(metadata) if metadata else None, book_id),
+            )
+
+    def delete_book(self, book_id: int) -> None:
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM Books WHERE id = ?", (book_id,))
 
     def list_books(self) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             rows = conn.execute(
-                "SELECT id, title, author, language, metadata FROM Books ORDER BY updated_at DESC, id DESC"
+                "SELECT id, title, author, language, publisher, category, notes, metadata FROM Books ORDER BY updated_at DESC, id DESC"
             ).fetchall()
             return [dict(row) for row in rows]
 
     def get_book(self, book_id: int) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT id, title, author, language, metadata FROM Books WHERE id = ?",
+                "SELECT id, title, author, language, publisher, category, notes, metadata FROM Books WHERE id = ?",
                 (book_id,),
             ).fetchone()
             return dict(row) if row else None
-
-    def update_book(self, book_id: int, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> None:
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE Books
-                SET title = ?, author = ?, language = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (title, author, language, json.dumps(metadata) if metadata else None, book_id),
-            )
-
-    def delete_book(self, book_id: int) -> None:
-        with self._get_connection() as conn:
-            conn.execute("DELETE FROM Books WHERE id = ?", (book_id,))
 
     def add_chapter(self, book_id: int, title: str, sequence: int, chapter_type: str = 'Content Chapter') -> int:
         """Add a chapter with its specific anatomy type."""

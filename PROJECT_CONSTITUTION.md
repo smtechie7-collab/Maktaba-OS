@@ -1,46 +1,47 @@
-# MAKTABA-OS: Project Constitution
+# MAKTABA-OS: The Master Constitution (Next-Gen)
 
 ## 1. Mission & Vision
-**Maktaba-OS** is a production-grade Islamic Digital Publishing Engine. Its purpose is to handle high-quality multilingual (Arabic, Urdu, Gujarati, etc.) typesetting and audio processing with the precision of a professional publishing house.
+**Maktaba-OS** is not just a tool; it is the definitive global standard for Islamic Desktop Publishing (DTP). Our mission is to bridge ancient, sacred texts with hyper-modern, immersive technology. We are building an ecosystem that handles pixel-perfect multilingual typesetting (Arabic/Urdu/Gujarati), live 3D WYSIWYG authoring, and intelligent audio processing with the precision of a multi-million dollar publishing house.
 
 ## 2. Core Commandments (Non-Negotiable)
-1.  **Preserve the Sacredness of Data**: Raw data is never deleted or directly overwritten. Every edit must be versioned.
-2.  **RTL First**: Right-to-Left (Arabic/Urdu) support is not a feature; it is the foundation. Layouts must handle ligatures and complex shaping correctly.
-3.  **Modular Monolith**: Code must be separated into clear modules (`src/data`, `src/layout`, `src/audio`, etc.). Modules should interact through well-defined interfaces.
-4.  **Local-First, Performance-Always**: The engine should run efficiently on local machines (SQLite, local FFmpeg, WeasyPrint).
+1.  **The Sacredness of Data**: Raw data is immortal. Never use destructive `DELETE` on content blocks. Every edit must be versioned, trackable, and safe.
+2.  **Immersive UX is King**: The software must feel like magic. No cluttered databases, no raw code views for the end-user. Interactions must be fluid, contextual, and distraction-free (e.g., 3D Book Illusions, Breathing Grids).
+3.  **RTL Excellence**: Right-to-Left (Arabic/Urdu) support is our foundation, not an afterthought. Layouts must perfectly handle complex Nastaliq ligatures, Kashidas, and Harakat positioning.
+4.  **The Dual-Engine Mandate**: The UI uses Chromium (WebEngine) for highly interactive, real-time 3D WYSIWYG previews. The Export layer uses WeasyPrint/Pango for CMYK, press-ready PDF perfection. They must remain perfectly synced.
+5.  **Local-First, Cloud-Ready**: Extreme local performance (SQLite, FFmpeg) with architectures designed to easily sync to the cloud in the future.
 
 ## 3. Architectural Standards
 ### A. Data Integrity (The "Source of Truth")
--   **Storage**: Hybrid Relational + JSON. Use relational tables for indexing/metadata and JSON for content blocks to allow schema flexibility.
--   **Soft Deletes**: Use `is_active` or `deleted_at` flags. Never use `DELETE` on content.
+-   **Storage**: Advanced Hybrid Relational + JSON. Relational tables for rigid indexing/metadata; JSON for highly flexible, multi-language content blocks.
+-   **Soft Deletes**: Strict adherence to `is_active=0` flags.
 -   **Versioning**: Each content block must have a `version_id`.
 
-### B. Layout & Typography
--   **Rendering**: WeasyPrint is the standard. Avoid headless Chrome unless strictly necessary.
+### B. Layout, Typography & UI
+-   **Studio Rendering**: PyQt6 mixed with QWebEngineView. The UI must utilize modern desktop patterns (cards, stacks, smooth transitions, click-to-edit bridges).
+-   **Print Rendering**: WeasyPrint (Cairo/Pango stack). Must output 300 DPI, CMYK, with bleed, gutter, and crop marks.
 -   **Fonts**: Only high-quality, open-source fonts (Amiri, Jameel Noori Nastaliq, etc.) must be used.
--   **Print Quality**: Always target 300 DPI, CMYK color space, with bleed and crop marks.
 
 ### C. Audio Pipeline
--   **Quality**: Use EBU R128 standards for loudness normalization (-16 LUFS).
--   **Consistency**: Automated crossfades between chapters are mandatory.
+-   **Quality**: EBU R128 standards for loudness normalization (-16 LUFS).
+-   **Generative Elements**: Automated QR Code generation linking to processed audio splits.
 
 ## 4. Coding Patterns & Style
 -   **Naming**: Descriptive over concise (e.g., `generate_book_pdf` instead of `gen_pdf`).
 -   **Type Hinting**: All Python functions must have type hints.
--   **Logging**: Use structured logging. Every module must log its entry and exit points for debugging.
--   **Error Handling**: Never "pass" silently. Catch specific exceptions (e.g., `sqlite3.Error`, `WeasyPrintError`).
+-   **Logging**: Professional structured logging. Silent failures are strictly forbidden.
+-   **Graceful Degradation**: If WebEngine fails, fallback to TextBrowser. If Pango fails, alert gracefully.
 
 ## 5. UI/UX Philosophy
 -   **Modernity**: Dark mode by default.
--   **Simplicity**: A dashboard that hides complexity but allows power-user control.
--   **Responsiveness**: The GUI (PyQt6) must be fluid and handle large datasets without freezing (use threading for heavy tasks).
+-   **The 'Blank Canvas' Cure**: Users must never feel lost. Auto-generate Chapter 1, use empty-state guides, and ensure "Click to Edit" is always visible.
+-   **Context-Aware Interfaces**: Tools and buttons should only appear when relevant. Menus should adapt to the active language (Breathing Flex-Grid concept).
+-   **Responsiveness**: 0% GUI Freezes. ALL database fetches and file I/O must run on QThread workers.
 
 ## 6. AI Interaction Rules (For Future Agents)
--   **Context**: Before writing code, read `PROJECT_CONSTITUTION.md` and `blueprint_v3.0.md`.
--   **Surgical Editing (CRITICAL)**: NEVER do full file rewrites just to fix a small bug or "refactor" unprompted. If you need to fix line 45, ONLY edit line 45. Preserve all surrounding code, comments, and working logic. Do not damage existing functional code.
--   **Incrementalism**: Generate code module-by-module. Do not attempt to build the entire app in one go.
+-   **Context Awareness**: Always ingest this Constitution, `blueprint_v3.0.md`, and the hardening plan before proposing architecture.
+-   **Surgical Editing (CRITICAL)**: NEVER delete working code to "refactor" unprompted. Use diffs to modify ONLY the required lines. Preserve existing logic, comments, and user-facing messages.
+-   **No Laziness**: If a feature requires 10 new files, CSS changes, JS bridges, and DB migrations to feel "Pro", DO IT. Do not take shortcuts.
 -   **Validation**: Every feature must have a corresponding test in the `tests/` directory.
--   **Consistency**: If you find a pattern in `src/data`, replicate that style in `src/layout`.
 
 ---
-*This document is the "Constitution" of Maktaba-OS. Any deviation requires a documented reason and a version update.*
+*This is the unbreakable law of Maktaba-OS. We are building a legacy, not a script.*

@@ -6,8 +6,8 @@ import re
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QListWidget,
                              QMessageBox, QLineEdit, QTreeWidget, QTreeWidgetItem,
-                             QTabWidget, QDockWidget, QFileDialog, QTextBrowser, QMenuBar, QMenu,
-                             QListWidgetItem, QFrame)
+                             QTabWidget, QDockWidget, QFileDialog, QTextBrowser, QMenuBar, QMenu, QStackedWidget,
+                             QListWidgetItem, QFrame, QStyle, QComboBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 
@@ -29,6 +29,8 @@ from src.ui.components.editor_panel import EditorPanel
 from src.ui.components.audio_panel import AudioPanel
 from src.ui.components.properties_panel import PropertiesPanel
 from src.ui.components.web_bridge import WebBridge
+from src.ui.components.command_palette import CommandPalette
+from src.ui.workers import DbWorker
 from src.ui.styles.style_loader import load_stylesheet
 
 class PDFWorker(QThread):
@@ -47,7 +49,7 @@ class PDFWorker(QThread):
 class PreviewWorker(QThread):
     finished = pyqtSignal(int, bool, str)
 
-    def __init__(self, request_id, book_id, db_path, template_dir, draft_data, styles, active_chapter_id=None):
+    def __init__(self, request_id, book_id, db_path, template_dir, draft_data, styles, active_chapter_id=None, preview_mode="Full Book"):
         super().__init__()
         self.request_id = request_id
         self.book_id = book_id
@@ -56,6 +58,7 @@ class PreviewWorker(QThread):
         self.draft_data = draft_data
         self.styles = styles
         self.active_chapter_id = active_chapter_id
+        self.preview_mode = preview_mode
 
     def run(self):
         try:
@@ -67,8 +70,12 @@ class PreviewWorker(QThread):
 
             with db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT title, author FROM Books WHERE id = ?", (self.book_id,))
+                cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (self.book_id,))
                 book_info = cursor.fetchone()
+                
+            book_metadata = {}
+            if book_info and book_info['metadata']:
+                book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
 
             content_blocks = db.get_book_content(self.book_id)
             chapters_data = []
@@ -93,6 +100,9 @@ class PreviewWorker(QThread):
                         "content_type": block['content_type']
                     })
 
+            if self.preview_mode == "Active Chapter" and self.active_chapter_id:
+                chapters_data = [c for c in chapters_data if c["chapter_id"] == self.active_chapter_id]
+
             has_draft = any([
                 self.draft_data.get('ar'),
                 self.draft_data.get('ur'),
@@ -116,6 +126,8 @@ class PreviewWorker(QThread):
 
             html_content = template.render(
                 book_title=book_info['title'] if book_info else "Preview",
+                author=book_info['author'] if book_info else "",
+                book_metadata=book_metadata,
                 chapters=chapters_data,
                 margins=self.styles.get("margins"),
                 fonts=self.styles.get("fonts")
@@ -148,10 +160,88 @@ class MaktabaDashboard(QMainWindow):
         
         self.setStyleSheet(load_stylesheet("app.qss"))
 
-        self.main_surface = QWidget()
-        self.main_layout = QVBoxLayout(self.main_surface)
-        self.main_layout.setContentsMargins(14, 12, 14, 14)
-        self.main_layout.setSpacing(10)
+        # --- MAIN UX ARCHITECTURE: THE STACK ---
+        self.central_stack = QStackedWidget()
+        self.setCentralWidget(self.central_stack)
+
+        # ==========================================
+        # PAGE 1: THE LIBRARY HOME SCREEN
+        # ==========================================
+        self.library_page = QWidget()
+        self.library_layout = QVBoxLayout(self.library_page)
+        self.library_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.library_layout.setContentsMargins(50, 50, 50, 50)
+
+        lib_title = QLabel("Maktaba Studio")
+        lib_title.setStyleSheet("font-size: 36px; font-weight: 800; color: #176B87; margin-bottom: 5px;")
+        lib_subtitle = QLabel("Select a project or start a new book to begin authoring.")
+        lib_subtitle.setStyleSheet("font-size: 16px; color: #52616B; margin-bottom: 30px;")
+        
+        self.library_layout.addWidget(lib_title, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.library_layout.addWidget(lib_subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Library Controls
+        lib_controls = QHBoxLayout()
+        self.book_search = QLineEdit()
+        self.book_search.setPlaceholderText("Search your library...")
+        self.book_search.setMinimumWidth(400)
+        self.book_search.setStyleSheet("padding: 12px; font-size: 16px; border-radius: 8px;")
+        self.book_search.textChanged.connect(self.apply_book_filter)
+        
+        self.add_book_btn = QPushButton("📄 Start New Book")
+        self.add_book_btn.setObjectName("primaryBtn")
+        self.add_book_btn.setStyleSheet("padding: 12px 24px; font-size: 16px; font-weight: bold;")
+        self.add_book_btn.clicked.connect(self.show_add_book_dialog)
+
+        self.lib_edit_btn = QPushButton("⚙️ Settings")
+        self.lib_edit_btn.setObjectName("secondaryBtn")
+        self.lib_edit_btn.setStyleSheet("padding: 12px 20px; font-size: 16px; font-weight: bold;")
+        self.lib_edit_btn.setEnabled(False)
+        self.lib_edit_btn.clicked.connect(self.show_edit_book_dialog)
+
+        self.lib_delete_btn = QPushButton("🗑️ Delete")
+        self.lib_delete_btn.setObjectName("dangerBtn")
+        self.lib_delete_btn.setStyleSheet("padding: 12px 20px; font-size: 16px; font-weight: bold;")
+        self.lib_delete_btn.setEnabled(False)
+        self.lib_delete_btn.clicked.connect(self.delete_book_action)
+
+        lib_controls.addStretch()
+        lib_controls.addWidget(self.book_search)
+        lib_controls.addWidget(self.add_book_btn)
+        lib_controls.addWidget(self.lib_edit_btn)
+        lib_controls.addWidget(self.lib_delete_btn)
+        lib_controls.addStretch()
+        self.library_layout.addLayout(lib_controls)
+
+        self.book_list = QListWidget()
+        self.book_list.setMaximumWidth(800)
+        self.book_list.setStyleSheet("""
+            QListWidget { font-size: 16px; padding: 10px; border-radius: 10px; border: 2px solid #CFD7DE; }
+            QListWidget::item { padding: 15px; border-bottom: 1px solid #EEF1F4; }
+        """)
+        self.book_list.itemDoubleClicked.connect(self.open_selected_book)
+        self.book_list.itemSelectionChanged.connect(self.on_library_selection_changed)
+        
+        list_container = QHBoxLayout()
+        list_container.addStretch()
+        list_container.addWidget(self.book_list)
+        list_container.addStretch()
+        self.library_layout.addLayout(list_container)
+
+        self.book_empty_label = QLabel("No books yet. Create a book to start.")
+        self.book_empty_label.setStyleSheet("font-size: 16px; color: #888;")
+        self.library_layout.addWidget(self.book_empty_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.library_layout.addStretch()
+
+        self.central_stack.addWidget(self.library_page)
+
+        # ==========================================
+        # PAGE 2: THE AUTHORING STUDIO
+        # ==========================================
+        self.studio_page = QWidget()
+        self.studio_layout = QVBoxLayout(self.studio_page)
+        self.studio_layout.setContentsMargins(14, 12, 14, 14)
+        self.studio_layout.setSpacing(10)
 
         self.central_tabs = QTabWidget()
         self.editor_panel = EditorPanel()
@@ -162,8 +252,9 @@ class MaktabaDashboard(QMainWindow):
         self.central_tabs.addTab(self.editor_panel, "📝 Maktaba Editor")
         self.audio_panel = AudioPanel()
         self.central_tabs.addTab(self.audio_panel, "🎵 Audio Engine")
-        self.main_layout.addWidget(self.central_tabs)
-        self.setCentralWidget(self.main_surface)
+        self.studio_layout.addWidget(self.central_tabs)
+        self.central_stack.addWidget(self.studio_page)
+        
         self.central_tabs.setTabText(0, "Editor")
         self.central_tabs.setTabText(1, "Audio")
 
@@ -172,24 +263,24 @@ class MaktabaDashboard(QMainWindow):
         nav_widget = QWidget()
         nav_layout = QVBoxLayout(nav_widget)
         
-        btn_layout = QHBoxLayout()
-        self.add_book_btn = QPushButton("+ Book")
-        self.add_book_btn.clicked.connect(self.show_add_book_dialog)
-        self.edit_book_btn = QPushButton("Edit")
-        self.edit_book_btn.clicked.connect(self.show_edit_book_dialog)
-        self.delete_book_btn = QPushButton("Delete")
-        self.delete_book_btn.clicked.connect(self.delete_current_book)
-        btn_layout.addWidget(self.add_book_btn)
-        btn_layout.addWidget(self.edit_book_btn)
-        btn_layout.addWidget(self.delete_book_btn)
-        nav_layout.addLayout(btn_layout)
+        # Clean Studio Navigation
+        self.back_to_lib_btn = QPushButton("🏠 Return to Library")
+        self.back_to_lib_btn.setObjectName("secondaryBtn")
+        self.back_to_lib_btn.setStyleSheet("text-align: left; padding: 12px; font-size: 14px; border: none; border-bottom: 2px solid #CFD7DE; border-radius: 0px; margin-bottom: 10px;")
+        self.back_to_lib_btn.clicked.connect(self.close_book_and_go_home)
+        nav_layout.addWidget(self.back_to_lib_btn)
 
         structure_btn_layout = QHBoxLayout()
-        self.add_chap_btn = QPushButton("+ Chapter")
+        self.add_chap_btn = QPushButton()
+        self.add_chap_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        self.add_chap_btn.setToolTip("New Chapter")
         self.add_chap_btn.clicked.connect(self.show_add_chapter_dialog)
-        self.edit_chap_btn = QPushButton("Edit")
+        self.edit_chap_btn = QPushButton("✏️")
+        self.edit_chap_btn.setToolTip("Edit Chapter")
         self.edit_chap_btn.clicked.connect(self.show_edit_chapter_dialog)
-        self.delete_chap_btn = QPushButton("Delete")
+        self.delete_chap_btn = QPushButton()
+        self.delete_chap_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.delete_chap_btn.setToolTip("Delete Chapter")
         self.delete_chap_btn.clicked.connect(self.delete_current_chapter)
         structure_btn_layout.addWidget(self.add_chap_btn)
         structure_btn_layout.addWidget(self.edit_chap_btn)
@@ -197,45 +288,39 @@ class MaktabaDashboard(QMainWindow):
         nav_layout.addLayout(structure_btn_layout)
 
         order_btn_layout = QHBoxLayout()
-        self.chapter_up_btn = QPushButton("Chapter Up")
+        self.chapter_up_btn = QPushButton()
+        self.chapter_up_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.chapter_up_btn.setToolTip("Move Chapter Up")
         self.chapter_up_btn.clicked.connect(lambda: self.move_current_chapter(-1))
-        self.chapter_down_btn = QPushButton("Chapter Down")
+        self.chapter_down_btn = QPushButton()
+        self.chapter_down_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.chapter_down_btn.setToolTip("Move Chapter Down")
         self.chapter_down_btn.clicked.connect(lambda: self.move_current_chapter(1))
         order_btn_layout.addWidget(self.chapter_up_btn)
         order_btn_layout.addWidget(self.chapter_down_btn)
         nav_layout.addLayout(order_btn_layout)
 
         block_btn_layout = QHBoxLayout()
-        self.block_up_btn = QPushButton("Block Up")
+        self.block_up_btn = QPushButton()
+        self.block_up_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.block_up_btn.setToolTip("Move Block Up")
         self.block_up_btn.clicked.connect(lambda: self.move_selected_block(-1))
-        self.block_down_btn = QPushButton("Block Down")
+        self.block_down_btn = QPushButton()
+        self.block_down_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        self.block_down_btn.setToolTip("Move Block Down")
         self.block_down_btn.clicked.connect(lambda: self.move_selected_block(1))
-        self.duplicate_block_btn = QPushButton("Duplicate")
+        self.duplicate_block_btn = QPushButton("📋")
+        self.duplicate_block_btn.setToolTip("Duplicate Block")
         self.duplicate_block_btn.clicked.connect(self.duplicate_selected_block)
-        self.delete_block_btn = QPushButton("Delete Block")
+        self.delete_block_btn = QPushButton()
+        self.delete_block_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.delete_block_btn.setToolTip("Delete Block")
         self.delete_block_btn.clicked.connect(self.delete_selected_block)
         block_btn_layout.addWidget(self.block_up_btn)
         block_btn_layout.addWidget(self.block_down_btn)
         block_btn_layout.addWidget(self.duplicate_block_btn)
         block_btn_layout.addWidget(self.delete_block_btn)
         nav_layout.addLayout(block_btn_layout)
-
-        self.bulk_import_btn = QPushButton("Smart Bulk Import")
-        self.bulk_import_btn.setObjectName("primaryBtn")
-        self.bulk_import_btn.clicked.connect(self.show_bulk_import_dialog)
-        nav_layout.addWidget(self.bulk_import_btn)
-
-        self.book_search = QLineEdit()
-        self.book_search.setPlaceholderText("Search books...")
-        self.book_search.textChanged.connect(self.apply_book_filter)
-        nav_layout.addWidget(self.book_search)
-
-        self.book_list = QListWidget()
-        self.book_list.itemSelectionChanged.connect(self.handle_selection_change)
-        nav_layout.addWidget(QLabel("Library Books:"))
-        nav_layout.addWidget(self.book_list)
-        self.book_empty_label = QLabel("No books yet. Create a book to start.")
-        nav_layout.addWidget(self.book_empty_label)
 
         self.chapter_tree = QTreeWidget()
         self.chapter_tree.setHeaderLabels(["Book Structure"])
@@ -250,12 +335,37 @@ class MaktabaDashboard(QMainWindow):
         self.preview_dock = QDockWidget("Live Interactive Preview", self)
         self.preview_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         
-        self.preview_browser = QTextBrowser()
-        self.preview_browser.setOpenLinks(False)
-        self.preview_browser.anchorClicked.connect(self.handle_preview_click)
-        self.preview_browser.setHtml("<h2 style='color:#888; text-align:center;'>Select a book to see live preview...</h2>")
+        preview_container = QWidget()
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.preview_dock.setWidget(self.preview_browser)
+        preview_toolbar = QHBoxLayout()
+        preview_toolbar.setContentsMargins(10, 5, 10, 5)
+        preview_toolbar.addWidget(QLabel("Scope:"))
+        self.preview_mode_combo = QComboBox()
+        self.preview_mode_combo.addItems(["Full Book", "Active Chapter"])
+        self.preview_mode_combo.currentTextChanged.connect(self.update_live_preview)
+        preview_toolbar.addWidget(self.preview_mode_combo)
+        preview_toolbar.addStretch()
+        preview_layout.addLayout(preview_toolbar)
+        
+        if WEB_ENGINE_AVAILABLE:
+            self.preview_browser = QWebEngineView()
+            self.web_channel = QWebChannel()
+            self.web_bridge = WebBridge()
+            self.web_bridge.block_clicked.connect(self.load_block_for_editing)
+            self.web_bridge.block_edited.connect(self.handle_preview_edit)
+            self.web_channel.registerObject("pybridge", self.web_bridge)
+            self.preview_browser.page().setWebChannel(self.web_channel)
+        else:
+            self.preview_browser = QTextBrowser()
+            self.preview_browser.setOpenLinks(False)
+            self.preview_browser.anchorClicked.connect(self.handle_preview_click)
+        
+        self.preview_browser.setHtml("<h2 style='color:#888; text-align:center; font-family:sans-serif;'>Select a book to see live preview...</h2>")
+        
+        preview_layout.addWidget(self.preview_browser)
+        self.preview_dock.setWidget(preview_container)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_dock)
 
         self.prop_dock = QDockWidget("Inspector & Properties", self)
@@ -283,6 +393,52 @@ class MaktabaDashboard(QMainWindow):
         self.load_books()
         self.update_action_states()
         self.statusBar().showMessage("Maktaba Studio Ready.")
+        self.show_library_view()
+
+    def show_library_view(self):
+        """Hides the complex studio and shows only the clean library screen."""
+        self.central_stack.setCurrentWidget(self.library_page)
+        self.nav_dock.hide()
+        self.preview_dock.hide()
+        self.prop_dock.hide()
+        if hasattr(self, 'command_bar'):
+            self.command_bar.hide()
+        self.statusBar().showMessage("Maktaba Library")
+
+    def on_library_selection_changed(self):
+        has_selection = len(self.book_list.selectedItems()) > 0
+        self.lib_edit_btn.setEnabled(has_selection)
+        self.lib_delete_btn.setEnabled(has_selection)
+
+    def open_selected_book(self, item):
+        """Transitions from the library into the authoring studio."""
+        book_id = item.data(Qt.ItemDataRole.UserRole)
+        self.open_book_by_id(book_id)
+
+    def open_book_by_id(self, book_id):
+        self.current_book_id = book_id
+        self.current_chapter_id = None
+        self.selected_block_id = None
+        
+        self.central_stack.setCurrentWidget(self.studio_page)
+        self.nav_dock.show()
+        self.preview_dock.show()
+        self.prop_dock.show()
+        self.command_bar.show()
+        
+        self.refresh_structure()
+        self.update_live_preview()
+        self.update_action_states()
+        self.statusBar().showMessage(f"Opened Book #{book_id} in Studio Mode.")
+
+    def close_book_and_go_home(self):
+        """Closes the current project and returns to the library."""
+        self.current_book_id = None
+        self.current_chapter_id = None
+        self.selected_block_id = None
+        self.editor_panel.clear_fields()
+        self.preview_browser.setHtml("<h2 style='color:#888; text-align:center;'>Select a book to see live preview...</h2>")
+        self.show_library_view()
 
     def build_command_bar(self):
         self.command_bar = QFrame()
@@ -301,27 +457,43 @@ class MaktabaDashboard(QMainWindow):
         title_stack.addWidget(self.context_label)
         layout.addLayout(title_stack, stretch=2)
 
-        self.command_input = QLineEdit()
-        self.command_input.setObjectName("commandInput")
-        self.command_input.setPlaceholderText("Command or search")
-        self.command_input.returnPressed.connect(self.execute_quick_command)
-        layout.addWidget(self.command_input, stretch=3)
+        self.command_palette_btn = QPushButton("🔍 Search or Command (Ctrl+K)")
+        self.command_palette_btn.setObjectName("commandPaletteBtn")
+        self.command_palette_btn.clicked.connect(self.show_command_palette)
+        self.command_palette_btn.setStyleSheet("""
+            QPushButton#commandPaletteBtn {
+                text-align: left;
+                padding: 6px 12px;
+                color: #A0AEC0;
+                background-color: #2D3748;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+            }
+            QPushButton#commandPaletteBtn:hover {
+                background-color: #4A5568;
+                color: #FFFFFF;
+            }
+        """)
+        layout.addWidget(self.command_palette_btn, stretch=3)
 
-        self.quick_book_btn = QPushButton("New Book")
-        self.quick_book_btn.clicked.connect(self.show_add_book_dialog)
         self.quick_chapter_btn = QPushButton("New Chapter")
         self.quick_chapter_btn.clicked.connect(self.show_add_chapter_dialog)
         self.quick_save_btn = QPushButton("Save Block")
         self.quick_save_btn.setObjectName("primaryBtn")
         self.quick_save_btn.clicked.connect(self.editor_panel.on_save_clicked)
-        layout.addWidget(self.quick_book_btn)
+        
+        self.smart_paste_btn = QPushButton("⚡ Smart Paste Document")
+        self.smart_paste_btn.setObjectName("secondaryBtn")
+        self.smart_paste_btn.clicked.connect(self.show_bulk_import_dialog)
+        
         layout.addWidget(self.quick_chapter_btn)
+        layout.addWidget(self.smart_paste_btn)
         layout.addWidget(self.quick_save_btn)
 
         self.activity_label = QLabel("Ready")
         self.activity_label.setObjectName("activityPill")
         layout.addWidget(self.activity_label)
-        self.main_layout.addWidget(self.command_bar)
+        self.studio_layout.insertWidget(0, self.command_bar)
 
     def install_shortcuts(self):
         shortcuts = [
@@ -329,7 +501,7 @@ class MaktabaDashboard(QMainWindow):
             ("Ctrl+Shift+N", self.show_add_chapter_dialog),
             ("Ctrl+S", self.editor_panel.on_save_clicked),
             ("Ctrl+F", self.book_search.setFocus),
-            ("Ctrl+K", self.command_input.setFocus),
+            ("Ctrl+K", self.show_command_palette),
             ("Ctrl+P", self.handle_pdf_generation),
             ("Ctrl+I", self.show_bulk_import_dialog),
             ("Esc", self.editor_panel.clear_fields),
@@ -338,30 +510,37 @@ class MaktabaDashboard(QMainWindow):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(callback)
 
-    def execute_quick_command(self):
-        command = self.command_input.text().strip()
-        lowered = command.lower()
-        if not command:
-            return
+    def show_command_palette(self):
+        palette = CommandPalette(self)
+        palette.command_selected.connect(self.execute_palette_command)
+        
+        # Center the palette
+        palette.adjustSize()
+        geo = palette.geometry()
+        geo.moveCenter(self.geometry().center())
+        palette.setGeometry(geo)
+        
+        palette.exec()
 
-        if lowered in {"new book", "book", "/book"}:
-            self.command_input.clear()
+    def execute_palette_command(self, command):
+        if command == "book":
             self.show_add_book_dialog()
-        elif lowered in {"new chapter", "chapter", "/chapter"}:
-            self.command_input.clear()
+        elif command == "chapter":
             self.show_add_chapter_dialog()
-        elif lowered in {"save", "save block", "/save"}:
-            self.command_input.clear()
+        elif command == "save":
             self.editor_panel.on_save_clicked()
-        elif lowered in {"pdf", "export pdf", "/pdf"}:
-            self.command_input.clear()
+        elif command == "pdf":
             self.handle_pdf_generation()
-        elif lowered in {"import", "bulk import", "/import"}:
-            self.command_input.clear()
+        elif command == "import":
             self.show_bulk_import_dialog()
+        elif command == "search":
+            self.book_search.setFocus()
         else:
             self.book_search.setText(command)
             self.book_search.setFocus()
+
+    def execute_quick_command(self):
+        pass # Obsolete, removed usage
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -398,6 +577,28 @@ class MaktabaDashboard(QMainWindow):
                 self.statusBar().showMessage(f"Loaded Block #{block_id} for editing.", 3000)
                 break
 
+    def handle_preview_edit(self, block_id, lang, new_text):
+        """Saves text edited directly inside the HTML preview back to the DB."""
+        if not self.current_book_id: return
+        try:
+            with self.db._get_connection() as conn:
+                row = conn.execute("SELECT content_data FROM Content_Blocks WHERE id = ?", (block_id,)).fetchone()
+                if row:
+                    data = json.loads(row['content_data'])
+                    if data.get(lang, "") != new_text:
+                        data[lang] = new_text
+                        self.db.update_content_block(block_id, data)
+                        
+                        # Live sync the left editor panel if the user has that specific block open
+                        if self.selected_block_id == block_id:
+                            self.editor_panel.blockSignals(True)
+                            if lang in self.editor_panel.editors:
+                                self.editor_panel.editors[lang].setPlainText(new_text)
+                            self.editor_panel.blockSignals(False)
+                        self.statusBar().showMessage(f"Live Edit Saved: Block #{block_id} ({lang.upper()})", 2000)
+        except Exception as e:
+            print(f"Live WYSIWYG edit failed: {e}")
+
     def update_live_preview(self, *args):
         if not self.current_book_id: return
         self.preview_timer.start()
@@ -415,6 +616,7 @@ class MaktabaDashboard(QMainWindow):
         request_id = self.preview_request_id
         draft_data = self.editor_panel.get_data()
         styles = self.properties_panel.get_styles()
+        mode = self.preview_mode_combo.currentText() if hasattr(self, 'preview_mode_combo') else "Full Book"
         self.preview_worker = PreviewWorker(
             request_id=request_id,
             book_id=self.current_book_id,
@@ -422,7 +624,8 @@ class MaktabaDashboard(QMainWindow):
             template_dir=str(self.config.template_dir),
             draft_data=draft_data,
             styles=styles,
-            active_chapter_id=self.current_chapter_id
+            active_chapter_id=self.current_chapter_id,
+            preview_mode=mode
         )
         self.preview_worker.finished.connect(self._handle_preview_finished)
         self.preview_worker.start()
@@ -430,7 +633,12 @@ class MaktabaDashboard(QMainWindow):
     def _handle_preview_finished(self, request_id, success, message):
         if request_id == self.preview_request_id:
             if success:
-                self.preview_browser.setHtml(message)
+                if WEB_ENGINE_AVAILABLE:
+                    # Inject bridge script dynamically and pass base URL for assets
+                    bridge_script = "<script src='qrc:///qtwebchannel/qwebchannel.js'></script><script>new QWebChannel(qt.webChannelTransport, function(channel){ window.pybridge = channel.objects.pybridge; });</script>"
+                    self.preview_browser.setHtml(bridge_script + message, QUrl.fromLocalFile(str(self.config.template_dir) + "/"))
+                else:
+                    self.preview_browser.setHtml(message)
             else:
                 print(f"Live Preview Error: {message}")
 
@@ -447,8 +655,12 @@ class MaktabaDashboard(QMainWindow):
             
             with self.db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT title, author FROM Books WHERE id = ?", (self.current_book_id,))
+                cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (self.current_book_id,))
                 book_info = cursor.fetchone()
+                
+            book_metadata = {}
+            if book_info and book_info['metadata']:
+                book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
                 
             content_blocks = self.db.get_book_content(self.current_book_id)
             chapters_data = []
@@ -485,6 +697,8 @@ class MaktabaDashboard(QMainWindow):
             styles = self.properties_panel.get_styles()
             html_content = template.render(
                 book_title=book_info['title'] if book_info else "Preview",
+                author=book_info['author'] if book_info else "",
+                book_metadata=book_metadata,
                 chapters=chapters_data, margins=styles.get("margins"), fonts=styles.get("fonts")
             )
             self.preview_browser.setHtml(html_content)
@@ -492,8 +706,18 @@ class MaktabaDashboard(QMainWindow):
             print(f"Live Preview Error: {e}")
 
     def load_books(self):
-        self.all_books = self.db.list_books()
+        self.book_list.setEnabled(False)
+        self.statusBar().showMessage("Loading library...")
+        self._load_books_worker = DbWorker(self.db.list_books)
+        self._load_books_worker.finished.connect(self._on_books_loaded)
+        self._load_books_worker.error.connect(lambda e: self.statusBar().showMessage(f"Failed to load books: {e}"))
+        self._load_books_worker.start()
+
+    def _on_books_loaded(self, books):
+        self.all_books = books
+        self.book_list.setEnabled(True)
         self.apply_book_filter()
+        self.statusBar().clearMessage()
 
     def apply_book_filter(self):
         search_term = self.book_search.text().strip().lower() if hasattr(self, "book_search") else ""
@@ -525,40 +749,54 @@ class MaktabaDashboard(QMainWindow):
         else:
             self.book_empty_label.setText("No books yet. Create a book to start.")
         self.book_empty_label.setVisible(len(filtered_books) == 0)
-        if selected_row_index is not None:
-            self.book_list.setCurrentRow(selected_row_index)
-        elif filtered_books:
-            self.book_list.setCurrentRow(0)
-        else:
-            self.current_book_id = None
-            self.current_chapter_id = None
-            self.selected_block_id = None
-            self.chapter_tree.clear()
-            self.structure_empty_label.setVisible(True)
-            self.preview_browser.setHtml("<h2 style='color:#888; text-align:center;'>Create or select a book to see live preview...</h2>")
-            self.update_action_states()
 
     def show_add_book_dialog(self):
         dialog = BookDialog(self)
         if dialog.exec():
             data = dialog.get_data()
-            self.current_book_id = self.db.add_book(data['title'], data['author'], data['language'])
+            new_book_id = self.db.add_book(
+                data['title'], data['author'], data['language'],
+                publisher=data['publisher'], category=data['category'], notes=data['notes'], metadata=data['metadata']
+            )
+            
+            # UX Fix: Auto-create 'Chapter 1' so the user doesn't face a blank canvas
+            self.db.add_chapter(new_book_id, "Chapter 1", 1, "Content Chapter")
+            
             self.load_books()
+            
+            # Auto-open the newly created book in the studio
+            self.open_book_by_id(new_book_id)
 
     def show_edit_book_dialog(self):
-        if not self.current_book_id:
+        target_id = self.current_book_id
+        if self.central_stack.currentWidget() == self.library_page:
+            selected = self.book_list.selectedItems()
+            if selected: target_id = selected[0].data(Qt.ItemDataRole.UserRole)
+            
+        if not target_id:
             return QMessageBox.warning(self, "Error", "Select a book first.")
-        book = self.db.get_book(self.current_book_id)
+            
+        book = self.db.get_book(target_id)
         if not book:
             return QMessageBox.warning(self, "Error", "Selected book was not found.")
+            
         dialog = BookDialog(self, book)
         if dialog.exec():
             data = dialog.get_data()
-            self.db.update_book(self.current_book_id, data['title'], data['author'], data['language'])
+            self.db.update_book(
+                target_id, data['title'], data['author'], data['language'],
+                publisher=data['publisher'], category=data['category'], notes=data['notes'], metadata=data['metadata']
+            )
             self.load_books()
+            self.update_context_summary()
 
-    def delete_current_book(self):
-        if not self.current_book_id:
+    def delete_book_action(self):
+        target_id = self.current_book_id
+        if self.central_stack.currentWidget() == self.library_page:
+            selected = self.book_list.selectedItems()
+            if selected: target_id = selected[0].data(Qt.ItemDataRole.UserRole)
+            
+        if not target_id:
             return QMessageBox.warning(self, "Error", "Select a book first.")
         reply = QMessageBox.question(
             self,
@@ -568,25 +806,20 @@ class MaktabaDashboard(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self.db.delete_book(self.current_book_id)
-        self.current_book_id = None
-        self.current_chapter_id = None
-        self.selected_block_id = None
-        self.chapter_tree.clear()
+        self.db.delete_book(target_id)
         self.load_books()
-        self.preview_browser.setHtml("<h2 style='color:#888; text-align:center;'>Select a book to see live preview...</h2>")
-        self.update_action_states()
+        if self.current_book_id == target_id:
+            self.close_book_and_go_home()
 
     def show_add_chapter_dialog(self):
-        selected = self.book_list.currentItem()
-        if not selected: return QMessageBox.warning(self, "Error", "Select a book first.")
-        book_id = selected.data(Qt.ItemDataRole.UserRole)
+        if not self.current_book_id: return QMessageBox.warning(self, "Error", "Open a book first.")
         dialog = ChapterDialog(self)
         if dialog.exec():
             data = dialog.get_data()
             # Passing chapter TYPE to database now
-            self.current_chapter_id = self.db.add_chapter(book_id, data['title'], data['sequence'], data['type'])
-            self.handle_selection_change()
+            self.current_chapter_id = self.db.add_chapter(self.current_book_id, data['title'], data['sequence'], data['type'])
+            self.refresh_structure()
+            self.update_action_states()
 
     def show_edit_chapter_dialog(self):
         if not self.current_chapter_id:
@@ -598,7 +831,8 @@ class MaktabaDashboard(QMainWindow):
         if dialog.exec():
             data = dialog.get_data()
             self.db.update_chapter(self.current_chapter_id, data['title'], data['sequence'], data['type'])
-            self.handle_selection_change()
+            self.refresh_structure()
+            self.update_action_states()
 
     def delete_current_chapter(self):
         if not self.current_chapter_id:
@@ -614,36 +848,43 @@ class MaktabaDashboard(QMainWindow):
         self.db.delete_chapter(self.current_chapter_id)
         self.current_chapter_id = None
         self.selected_block_id = None
-        self.handle_selection_change()
+        self.refresh_structure()
+        self.update_action_states()
 
     def move_current_chapter(self, direction):
         if not self.current_chapter_id:
             return QMessageBox.warning(self, "Error", "Select a chapter first.")
         self.db.move_chapter(self.current_chapter_id, direction)
-        self.handle_selection_change()
-
-    def handle_selection_change(self):
-        selected = self.book_list.currentItem()
-        if not selected: 
-            self.current_book_id = None
-            self.current_chapter_id = None
-            self.selected_block_id = None
-            self.update_action_states()
-            return
-            
-        selected_book_id = selected.data(Qt.ItemDataRole.UserRole)
-        if selected_book_id != self.current_book_id:
-            self.current_book_id = selected_book_id
-            self.current_chapter_id = None
-            self.selected_block_id = None
         self.refresh_structure()
-        self.update_live_preview()
         self.update_action_states()
 
+    def _fetch_structure_data(self, book_id):
+        """Runs on the background thread to fetch heavy tree data."""
+        if not book_id: return [], []
+        content = self.db.get_book_content(book_id)
+        chapter_rows = self.db.list_chapters(book_id)
+        return content, chapter_rows
+
     def refresh_structure(self):
+        if not self.current_book_id:
+            self.chapter_tree.clear()
+            self.structure_empty_label.setVisible(True)
+            return
+
+        self.chapter_tree.setEnabled(False)
+        self.structure_empty_label.setText("Loading structure...")
+        self.structure_empty_label.setVisible(True)
+        
+        self._load_structure_worker = DbWorker(self._fetch_structure_data, self.current_book_id)
+        self._load_structure_worker.finished.connect(self._on_structure_loaded)
+        self._load_structure_worker.error.connect(lambda e: self.statusBar().showMessage(f"Failed to load structure: {e}"))
+        self._load_structure_worker.start()
+
+    def _on_structure_loaded(self, result):
+        content, chapter_rows = result
         self.chapter_tree.clear()
-        content = self.db.get_book_content(self.current_book_id)
-        chapter_rows = self.db.list_chapters(self.current_book_id)
+        self.chapter_tree.setEnabled(True)
+
         known_chapter_ids = {chapter["id"] for chapter in chapter_rows}
         if self.current_chapter_id not in known_chapter_ids:
             self.current_chapter_id = None
@@ -688,6 +929,9 @@ class MaktabaDashboard(QMainWindow):
             item = chapters.get(self.current_chapter_id)
             if item:
                 self.chapter_tree.setCurrentItem(item)
+        
+        if not chapter_rows:
+            self.structure_empty_label.setText("No chapters found.\nClick 'New Chapter' above to begin.")
         self.structure_empty_label.setVisible(len(chapter_rows) == 0)
         self.update_action_states()
 
@@ -788,14 +1032,11 @@ class MaktabaDashboard(QMainWindow):
         has_chapter = self.current_chapter_id is not None
         has_block = self.selected_block_id is not None
 
-        self.edit_book_btn.setEnabled(has_book)
-        self.delete_book_btn.setEnabled(has_book)
         self.add_chap_btn.setEnabled(has_book)
         self.edit_chap_btn.setEnabled(has_chapter)
         self.delete_chap_btn.setEnabled(has_chapter)
         self.chapter_up_btn.setEnabled(has_chapter)
         self.chapter_down_btn.setEnabled(has_chapter)
-        self.bulk_import_btn.setEnabled(has_book and has_chapter)
         self.gen_pdf_btn.setEnabled(has_book)
         self.block_up_btn.setEnabled(has_block)
         self.block_down_btn.setEnabled(has_block)
@@ -805,44 +1046,50 @@ class MaktabaDashboard(QMainWindow):
             self.quick_chapter_btn.setEnabled(has_book)
         if hasattr(self, "quick_save_btn"):
             self.quick_save_btn.setEnabled(has_book and has_chapter)
+        if hasattr(self, "smart_paste_btn"):
+            self.smart_paste_btn.setEnabled(has_book and has_chapter)
         self.update_context_summary()
+        
+        # UX Fix: Disable the editor completely if no chapter is selected to prevent confusion
+        if hasattr(self, "editor_panel"):
+            self.editor_panel.setEnabled(has_chapter)
 
     def show_bulk_import_dialog(self):
         if not self.current_book_id: return QMessageBox.warning(self, "Error", "Select a book.")
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (self.current_book_id,))
-            chapters = cursor.fetchall()
-            if not chapters: return
+        if not self.current_chapter_id: return QMessageBox.warning(self, "Error", "Select a chapter from the Project Explorer first to paste into.")
         
-        items = [f"{c['id']} - {c['title']}" for c in chapters]
-        from PyQt6.QtWidgets import QInputDialog
-        item, ok = QInputDialog.getItem(self, "Select Chapter", "Bulk Import to:", items, 0, False)
-        
-        if ok and item:
-            chapter_id = int(item.split(" - ")[0])
-            dialog = BulkImportDialog(self)
-            if dialog.exec():
-                data = dialog.get_data()
-                blocks = re.split(r'\n\s*\n', data['text'].strip())
-                imported = 0
-                for block in blocks:
-                    lines = block.strip().split("\n")
-                    if not lines: continue
-                    block_data = {"ar": "", "ur": "", "guj": "", "en": "", "reference": "", "metadata": data['metadata']}
-                    for line in lines:
-                        line = line.strip()
-                        if re.search(r'[\u0a80-\u0aff]', line): block_data["guj"] = line
-                        elif re.search(r'^[a-zA-Z0-9\s.,!?\'"-]+$', line): block_data["en"] = line
-                        elif re.search(r'[\u0600-\u06ff]', line):
-                            if not block_data["ar"]: block_data["ar"] = line
-                            else: block_data["ur"] = line
-                        else:
-                            if not block_data["ar"]: block_data["ar"] = line
-                    self.db.add_content_block(chapter_id, block_data)
+        dialog = BulkImportDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            
+            separator_pattern = data['separator'].replace('\\n', '\n')
+            blocks = re.split(r'\n\s*\n', data['text'].strip()) if separator_pattern == '\n\n' else data['text'].strip().split(separator_pattern)
+            
+            imported = 0
+            for block in blocks:
+                lines = block.strip().split("\n")
+                if not lines: continue
+                
+                block_data = {"ar": "", "ur": "", "guj": "", "en": "", "reference": "", "metadata": data['metadata']}
+                for line in lines:
+                    line = line.strip()
+                    if not line: continue
+                    if re.search(r'[\u0a80-\u0aff]', line): block_data["guj"] = line
+                    elif re.search(r'^[a-zA-Z0-9\s.,!?\'"-]+$', line): block_data["en"] = line
+                    elif re.search(r'[\u0600-\u06ff]', line):
+                        if not block_data["ar"]: block_data["ar"] = line
+                        else: block_data["ur"] = line
+                    else:
+                        if not block_data["ar"]: block_data["ar"] = line
+                
+                # Only insert if at least one language field was populated
+                if any([block_data["ar"], block_data["ur"], block_data["guj"], block_data["en"]]):
+                    self.db.add_content_block(self.current_chapter_id, block_data)
                     imported += 1
-                self.handle_selection_change()
-                QMessageBox.information(self, "Imported", f"{imported} blocks processed.")
+            
+            self.refresh_structure()
+            self.update_live_preview()
+            QMessageBox.information(self, "Imported", f"{imported} blocks successfully extracted and added to Chapter #{self.current_chapter_id}.")
 
     def handle_pdf_generation(self):
         if not self.current_book_id: return

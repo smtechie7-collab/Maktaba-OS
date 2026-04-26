@@ -43,11 +43,11 @@ Status: scaffolded
 - Remaining work: test packaged app on a clean Windows machine and tune hidden imports as needed.
 
 ## Phase 6: UI Style Cleanup
-Status: first pass implemented
+Status: implemented
 
 - Main dashboard QSS moved to `src/ui/styles/app.qss`.
 - Dialog QSS moved to `src/ui/styles/dialogs.qss`.
-- Remaining work: extract component-level inline styles from editor/audio/properties panels.
+- Component-level inline styles extracted from editor/audio/properties panels and moved to central QSS using objectNames and dynamic states.
 
 ## Phase 7: Release Gates
 Status: started
@@ -71,14 +71,14 @@ Status: first slice implemented
 - Added empty-state labels for library and book structure.
 - Action buttons are now disabled when their required selection is missing.
 - Tree refresh now preserves the active chapter and selected block where possible.
+- Added smarter validation to prevent saving completely empty content blocks.
 
 Remaining Phase A work:
 
 - Move book/chapter/block list loading and mutations to reusable background workers.
 - Add richer book metadata fields such as publisher, category, notes, and created/updated labels.
-- Add safer validation messages before saves/imports.
 
-## Phase UX: Modern Interaction Layer
+## Phase UX: Modern Interaction Layer (Graduated to Pro Studio)
 Status: first slice implemented
 
 - Reworked the global app stylesheet into a cleaner modern desktop authoring surface.
@@ -94,11 +94,11 @@ Status: first slice implemented
   - `Ctrl+P`: export PDF
   - `Ctrl+I`: bulk import
   - `Esc`: clear editor/edit mode
+- Added split preview modes (Full Book vs Active Chapter) to speed up live rendering.
+- Added Focus Mode to hide inactive language panels and maximize authoring space.
 
 Remaining Phase UX work:
 
 - Replace text-heavy controls with compact icon/tool buttons where PyQt icon support is available.
 - Add a proper command palette with fuzzy matching and visible action results.
-- Add split preview modes: selected chapter, full book, and print preview.
 - Add status/progress surfaces for async saves/imports/exports.
-- Clean component-level inline styles in editor/audio/properties panels.

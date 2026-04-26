@@ -1,10 +1,10 @@
-# MAKTABA-OS: V3.0 Technical Blueprint (Refined)
+# MAKTABA-OS: V4.0 "Pro Studio" Blueprint (1-Year Master Plan)
 
 ## 1. Project Overview
-Production-grade Islamic Digital Publishing Engine designed for high-quality Arabic/Urdu/Multi-lingual typesetting and audio processing.
+Maktaba-OS is a world-class, professional-grade Islamic Desktop Publishing (DTP) suite. It bridges the gap between structured database management and high-end visual typesetting, designed specifically for Arabic, Urdu, and complex multilingual literature.
 
-## 2. Core Architecture: Modular Monolith
-The system follows a strict **Separation of Concerns (SoC)** approach.
+## 2. Core Architecture: The Dual-Engine Monolith
+The system operates on a highly advanced, decoupled architecture to ensure WYSIWYG UI speed and perfect print quality.
 
 ### A. Data Layer (`src/data`)
 - **Engine**: SQLite with JSON1 extension support.
@@ -15,35 +15,40 @@ The system follows a strict **Separation of Concerns (SoC)** approach.
   - `Content_Blocks`: The actual text (Arabic/Urdu/Translations) stored in JSON format for easy versioning.
 - **Rules**: Never delete raw data. Use `version` and `is_active` flags for edits.
 
-### B. Layout & PDF Engine (`src/layout`)
-- **Engine**: WeasyPrint (3.0+).
-- **Dependencies**: Cairo, Pango, GObject (Must be correctly configured for Windows).
-- **Capabilities**:
-  - Full RTL support (Arabic/Urdu ligatures and shaping).
-  - 300 DPI CMYK output for professional printing.
-  - Bleed, margins, and crop marks via CSS Paged Media.
-  - Custom font embedding (Amiri, Jameel Noori Nastaliq, etc.).
+### B. The Dual Presentation Layer (`src/layout` & `src/ui`)
+- **The Studio Engine (UI)**: PyQt6 combined with Chromium (`QWebEngineView`). Uses a custom Python-JS bridge (`pybridge`) to allow users to click directly on 3D rendered HTML pages and live-edit the underlying database blocks.
+- **The Print Engine (Export)**: WeasyPrint with strict Pango/Cairo dependencies. Completely ignores UI elements (shadows, JS, 3D effects) via `@media print` CSS, focusing purely on CMYK colors, bleed, crop marks, and flawless RTL typesetting.
 
 ### C. Audio Pipeline (`src/audio`)
 - **Engine**: Pydub + FFmpeg.
 - **Processing**:
   - Normalization to -16 LUFS (EBU R128 standard).
   - Automated crossfades and silence trimming.
-  - Dynamic merging based on book chapter structure.
-
-### D. GUI Dashboard (`src/ui`) - *Future Sprint*
-- **Framework**: PyQt6.
-- **Theme**: Modern Dark Mode.
-- **Features**: Data management, real-time preview, and batch export controls.
+  - QR Code generation dynamically linked to the audio track.
 
 ---
 
-## 3. Current Sprint Focus: Headless Engine
-**Objective**: Build the bridge between SQLite and WeasyPrint.
+## 3. The 1-Year Next-Level Roadmap
+This roadmap dictates our long-term growth from a great tool to an industry standard.
 
-1.  **Data Ingestion**: CLI script to populate the database with JSON-structured text.
-2.  **HTML Templating**: Jinja2 templates for Arabic/Urdu layouts.
-3.  **PDF Generation**: Python wrapper for WeasyPrint with Pango-level text shaping.
+### Phase I: The Immersive Studio (Current Phase)
+- [x] Library vs Studio Stack paradigm.
+- [x] Breathing UI (Dynamic Flex-Grid Editors).
+- [x] Python-JS Bridge for 3D Book Click-to-Edit.
+- [ ] Deep WebGL/CSS3D integration for realistic page flipping (Turn.js).
+
+### Phase II: Advanced DTP Controls
+- [ ] Visual Property Inspector: Drag sliders for margin, leading, and kerning that update live.
+- [ ] Footnote Engine: Automated layout of footnotes at the bottom of printed pages without breaking WYSIWYG.
+- [ ] Custom Template Builder: Let users create their own book themes via GUI.
+
+### Phase III: The Audio-Visual Sync
+- [ ] Waveform UI: View and trim FFmpeg audio directly inside the PyQt dashboard.
+- [ ] Word-Level Sync: Highlight Arabic words in the PDF/UI as the audio plays (karaoke style).
+
+### Phase IV: Extensibility & Scale
+- [ ] Plugin System: Allow Python scripts to be loaded dynamically for custom imports.
+- [ ] Cloud Sync: AES-256 encrypted SQLite sync to an S3 bucket for multi-device authoring.
 
 ---
 

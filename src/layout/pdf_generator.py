@@ -61,9 +61,13 @@ class PDFGenerator:
         # 1. Fetch metadata
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT title, author FROM Books WHERE id = ?", (book_id,))
+            cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (book_id,))
             book_info = cursor.fetchone()
             if not book_info: return
+            
+            book_metadata = {}
+            if book_info['metadata']:
+                book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
 
         # 2. Fetch content optimized
         content_blocks = self.db.get_book_content(book_id)
@@ -108,6 +112,7 @@ class PDFGenerator:
         full_html = self.template.render(
             book_title=book_info['title'],
             author=book_info['author'],
+            book_metadata=book_metadata,
             chapters=chapters_data,
             margins=styles.get("margins"),
             fonts=styles.get("fonts"),

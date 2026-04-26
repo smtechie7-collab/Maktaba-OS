@@ -3,15 +3,17 @@ import json
 
 def test_add_book(test_db):
     """Test adding a book to the database."""
-    book_id = test_db.add_book("Test Book", "Test Author", "ar", {"category": "Test"})
+    book_id = test_db.add_book("Test Book", "Test Author", "ar", publisher="Test Pub", category="Test Cat")
     assert book_id == 1
     
     with test_db._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT title, author FROM Books WHERE id = ?", (book_id,))
+        cursor.execute("SELECT title, author, publisher, category FROM Books WHERE id = ?", (book_id,))
         row = cursor.fetchone()
         assert row['title'] == "Test Book"
         assert row['author'] == "Test Author"
+        assert row['publisher'] == "Test Pub"
+        assert row['category'] == "Test Cat"
 
 def test_database_uses_wal_and_migrations(test_db):
     """Verify production pragmas and schema migration tracking are active."""
@@ -69,12 +71,13 @@ def test_soft_delete(test_db):
 
 def test_book_update_and_delete(test_db):
     book_id = test_db.add_book("Draft", "Author", "en")
-    test_db.update_book(book_id, "Final", "Editor", "multi")
+    test_db.update_book(book_id, "Final", "Editor", "multi", publisher="Maktaba")
 
     book = test_db.get_book(book_id)
     assert book["title"] == "Final"
     assert book["author"] == "Editor"
     assert book["language"] == "multi"
+    assert book["publisher"] == "Maktaba"
 
     test_db.delete_book(book_id)
     assert test_db.get_book(book_id) is None

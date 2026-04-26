@@ -14,7 +14,7 @@ class PropertiesPanel(QWidget):
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+
 
         scroll_content = QWidget()
         layout = QVBoxLayout(scroll_content)
