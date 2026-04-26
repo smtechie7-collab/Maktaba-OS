@@ -66,3 +66,48 @@ def test_soft_delete(test_db):
     results = test_db.get_book_content(book_id)
     assert len(results) == 1
     assert results[0]["block_id"] is None
+
+def test_book_update_and_delete(test_db):
+    book_id = test_db.add_book("Draft", "Author", "en")
+    test_db.update_book(book_id, "Final", "Editor", "multi")
+
+    book = test_db.get_book(book_id)
+    assert book["title"] == "Final"
+    assert book["author"] == "Editor"
+    assert book["language"] == "multi"
+
+    test_db.delete_book(book_id)
+    assert test_db.get_book(book_id) is None
+
+def test_chapter_update_delete_and_move(test_db):
+    book_id = test_db.add_book("Book")
+    first = test_db.add_chapter(book_id, "First", 1)
+    second = test_db.add_chapter(book_id, "Second", 2)
+
+    test_db.update_chapter(first, "Opening", 1, "Title Page")
+    assert test_db.get_chapter(first)["title"] == "Opening"
+
+    test_db.move_chapter(second, -1)
+    chapters = test_db.list_chapters(book_id)
+    assert [chapter["id"] for chapter in chapters] == [second, first]
+
+    test_db.delete_chapter(first)
+    chapters = test_db.list_chapters(book_id)
+    assert [chapter["id"] for chapter in chapters] == [second]
+
+def test_block_duplicate_soft_delete_and_move(test_db):
+    book_id = test_db.add_book("Book")
+    chap_id = test_db.add_chapter(book_id, "Chapter", 1)
+    first = test_db.add_content_block(chap_id, {"en": "First"})
+    second = test_db.add_content_block(chap_id, {"en": "Second"})
+
+    test_db.move_content_block(second, -1)
+    content = [row for row in test_db.get_book_content(book_id) if row["block_id"]]
+    assert [row["block_id"] for row in content] == [second, first]
+
+    duplicate = test_db.duplicate_content_block(second)
+    assert duplicate is not None
+    test_db.soft_delete_content_block(second)
+
+    content = [row for row in test_db.get_book_content(book_id) if row["block_id"]]
+    assert [row["block_id"] for row in content] == [first, duplicate]

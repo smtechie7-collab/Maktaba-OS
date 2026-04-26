@@ -13,7 +13,7 @@ from src.utils.logger import setup_logger
 logger = setup_logger("Database")
 
 class DatabaseManager:
-    CURRENT_SCHEMA_VERSION = 2
+    CURRENT_SCHEMA_VERSION = 3
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = str(Path(db_path).expanduser().resolve()) if db_path else str(database_path())
@@ -54,6 +54,7 @@ class DatabaseManager:
         migrations: List[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
             (1, "initial_schema", self._migration_001_initial_schema),
             (2, "add_chapter_type", self._migration_002_add_chapter_type),
+            (3, "add_block_sequence", self._migration_003_add_block_sequence),
         ]
         current_version = self._schema_version(conn)
 
@@ -119,6 +120,19 @@ class DatabaseManager:
         if "chapter_type" not in columns:
             conn.execute("ALTER TABLE Chapters ADD COLUMN chapter_type TEXT DEFAULT 'Content Chapter'")
 
+    def _migration_003_add_block_sequence(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(Content_Blocks)").fetchall()
+        }
+        if "sequence_number" not in columns:
+            conn.execute("ALTER TABLE Content_Blocks ADD COLUMN sequence_number INTEGER DEFAULT 0")
+            conn.execute("""
+                UPDATE Content_Blocks
+                SET sequence_number = id
+                WHERE sequence_number IS NULL OR sequence_number = 0
+            """)
+
     def add_book(self, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -127,6 +141,36 @@ class DatabaseManager:
                 (title, author, language, json.dumps(metadata) if metadata else None)
             )
             return cursor.lastrowid
+
+    def list_books(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, title, author, language, metadata FROM Books ORDER BY updated_at DESC, id DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_book(self, book_id: int) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, title, author, language, metadata FROM Books WHERE id = ?",
+                (book_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_book(self, book_id: int, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE Books
+                SET title = ?, author = ?, language = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (title, author, language, json.dumps(metadata) if metadata else None, book_id),
+            )
+
+    def delete_book(self, book_id: int) -> None:
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM Books WHERE id = ?", (book_id,))
 
     def add_chapter(self, book_id: int, title: str, sequence: int, chapter_type: str = 'Content Chapter') -> int:
         """Add a chapter with its specific anatomy type."""
@@ -138,14 +182,148 @@ class DatabaseManager:
             )
             return cursor.lastrowid
 
+    def list_chapters(self, book_id: int) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.id, c.book_id, c.title, c.sequence_number, c.chapter_type,
+                       COUNT(cb.id) AS active_block_count
+                FROM Chapters c
+                LEFT JOIN Content_Blocks cb ON c.id = cb.chapter_id AND cb.is_active = 1
+                WHERE c.book_id = ?
+                GROUP BY c.id
+                ORDER BY c.sequence_number ASC, c.id ASC
+                """,
+                (book_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_chapter(self, chapter_id: int) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, book_id, title, sequence_number, chapter_type FROM Chapters WHERE id = ?",
+                (chapter_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_chapter(self, chapter_id: int, title: str, sequence: int, chapter_type: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE Chapters SET title = ?, sequence_number = ?, chapter_type = ? WHERE id = ?",
+                (title, sequence, chapter_type, chapter_id),
+            )
+
+    def delete_chapter(self, chapter_id: int) -> None:
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM Chapters WHERE id = ?", (chapter_id,))
+
+    def move_chapter(self, chapter_id: int, direction: int) -> None:
+        chapter = self.get_chapter(chapter_id)
+        if not chapter:
+            return
+
+        order = "DESC" if direction < 0 else "ASC"
+        comparator = "<" if direction < 0 else ">"
+        with self._get_connection() as conn:
+            target = conn.execute(
+                f"""
+                SELECT id, sequence_number
+                FROM Chapters
+                WHERE book_id = ? AND sequence_number {comparator} ?
+                ORDER BY sequence_number {order}, id {order}
+                LIMIT 1
+                """,
+                (chapter["book_id"], chapter["sequence_number"]),
+            ).fetchone()
+            if not target:
+                return
+            conn.execute(
+                "UPDATE Chapters SET sequence_number = ? WHERE id = ?",
+                (target["sequence_number"], chapter_id),
+            )
+            conn.execute(
+                "UPDATE Chapters SET sequence_number = ? WHERE id = ?",
+                (chapter["sequence_number"], target["id"]),
+            )
+
     def add_content_block(self, chapter_id: int, content_data: Dict[str, Any], content_type: str = 'text') -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            next_sequence = conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM Content_Blocks WHERE chapter_id = ?",
+                (chapter_id,),
+            ).fetchone()[0]
             cursor.execute(
-                "INSERT INTO Content_Blocks (chapter_id, content_type, content_data) VALUES (?, ?, ?)",
-                (chapter_id, content_type, json.dumps(content_data))
+                """
+                INSERT INTO Content_Blocks (chapter_id, content_type, content_data, sequence_number)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chapter_id, content_type, json.dumps(content_data), next_sequence)
             )
             return cursor.lastrowid
+
+    def update_content_block(self, block_id: int, content_data: Dict[str, Any]) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE Content_Blocks SET content_data = ?, version = version + 1 WHERE id = ?",
+                (json.dumps(content_data), block_id),
+            )
+
+    def soft_delete_content_block(self, block_id: int) -> None:
+        with self._get_connection() as conn:
+            conn.execute("UPDATE Content_Blocks SET is_active = 0 WHERE id = ?", (block_id,))
+
+    def duplicate_content_block(self, block_id: int) -> Optional[int]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT chapter_id, content_type, content_data FROM Content_Blocks WHERE id = ? AND is_active = 1",
+                (block_id,),
+            ).fetchone()
+            if not row:
+                return None
+            next_sequence = conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM Content_Blocks WHERE chapter_id = ?",
+                (row["chapter_id"],),
+            ).fetchone()[0]
+            cursor = conn.execute(
+                """
+                INSERT INTO Content_Blocks (chapter_id, content_type, content_data, sequence_number)
+                VALUES (?, ?, ?, ?)
+                """,
+                (row["chapter_id"], row["content_type"], row["content_data"], next_sequence),
+            )
+            return cursor.lastrowid
+
+    def move_content_block(self, block_id: int, direction: int) -> None:
+        with self._get_connection() as conn:
+            block = conn.execute(
+                "SELECT id, chapter_id, sequence_number FROM Content_Blocks WHERE id = ? AND is_active = 1",
+                (block_id,),
+            ).fetchone()
+            if not block:
+                return
+            order = "DESC" if direction < 0 else "ASC"
+            comparator = "<" if direction < 0 else ">"
+            target = conn.execute(
+                f"""
+                SELECT id, sequence_number
+                FROM Content_Blocks
+                WHERE chapter_id = ? AND is_active = 1 AND sequence_number {comparator} ?
+                ORDER BY sequence_number {order}, id {order}
+                LIMIT 1
+                """,
+                (block["chapter_id"], block["sequence_number"]),
+            ).fetchone()
+            if not target:
+                return
+            conn.execute(
+                "UPDATE Content_Blocks SET sequence_number = ? WHERE id = ?",
+                (target["sequence_number"], block_id),
+            )
+            conn.execute(
+                "UPDATE Content_Blocks SET sequence_number = ? WHERE id = ?",
+                (block["sequence_number"], target["id"]),
+            )
 
     def add_footnote(self, block_id: int, content: Dict[str, Any], marker: str = None) -> int:
         with self._get_connection() as conn:
@@ -162,11 +340,11 @@ class DatabaseManager:
             cursor = conn.cursor()
             query = '''
                 SELECT c.id as chapter_id, c.title as chapter_title, c.chapter_type,
-                       cb.id as block_id, cb.content_data, cb.content_type
+                       cb.id as block_id, cb.content_data, cb.content_type, cb.sequence_number as block_sequence
                 FROM Chapters c
                 LEFT JOIN Content_Blocks cb ON c.id = cb.chapter_id AND cb.is_active = 1
                 WHERE c.book_id = ?
-                ORDER BY c.sequence_number ASC, cb.id ASC
+                ORDER BY c.sequence_number ASC, cb.sequence_number ASC, cb.id ASC
             '''
             cursor.execute(query, (book_id,))
             blocks = [dict(row) for row in cursor.fetchall()]

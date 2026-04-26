@@ -8,16 +8,23 @@ from src.ui.styles.style_loader import load_stylesheet
 DIALOG_STYLE = load_stylesheet("dialogs.qss")
 
 class BookDialog(QDialog):
-    def __init__(self, parent=None):
+    LANGUAGE_OPTIONS = {
+        "Arabic": "ar",
+        "Urdu": "ur",
+        "English": "en",
+        "Multilingual": "multi",
+    }
+
+    def __init__(self, parent=None, book_data=None):
         super().__init__(parent)
-        self.setWindowTitle("Add New Book")
+        self.setWindowTitle("Edit Book" if book_data else "Add New Book")
         self.setMinimumWidth(400)
         self.setStyleSheet(DIALOG_STYLE)
         self.layout = QFormLayout(self)
         self.title_input = QLineEdit()
         self.author_input = QLineEdit()
         self.lang_input = QComboBox()
-        self.lang_input.addItems(["Arabic", "Urdu", "English", "Multilingual"])
+        self.lang_input.addItems(list(self.LANGUAGE_OPTIONS.keys()))
         self.layout.addRow("Book Title:", self.title_input)
         self.layout.addRow("Author:", self.author_input)
         self.layout.addRow("Primary Language:", self.lang_input)
@@ -30,17 +37,25 @@ class BookDialog(QDialog):
         self.buttons.addWidget(self.save_btn)
         self.buttons.addWidget(self.cancel_btn)
         self.layout.addRow(self.buttons)
+        if book_data:
+            self.title_input.setText(book_data.get("title") or "")
+            self.author_input.setText(book_data.get("author") or "")
+            language = book_data.get("language") or "en"
+            for label, value in self.LANGUAGE_OPTIONS.items():
+                if value == language:
+                    self.lang_input.setCurrentText(label)
+                    break
 
     def get_data(self):
         return {
             "title": self.title_input.text(), "author": self.author_input.text(),
-            "language": self.lang_input.currentText().lower()[:2] if self.lang_input.currentText() != "Multilingual" else "multi"
+            "language": self.LANGUAGE_OPTIONS[self.lang_input.currentText()]
         }
 
 class ChapterDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, chapter_data=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Book Element")
+        self.setWindowTitle("Edit Book Element" if chapter_data else "Add Book Element")
         self.setMinimumWidth(400)
         self.setStyleSheet(DIALOG_STYLE)
         self.layout = QFormLayout(self)
@@ -67,6 +82,10 @@ class ChapterDialog(QDialog):
         self.buttons.addWidget(self.save_btn)
         self.buttons.addWidget(self.cancel_btn)
         self.layout.addRow(self.buttons)
+        if chapter_data:
+            self.type_input.setCurrentText(chapter_data.get("chapter_type") or "Content Chapter")
+            self.title_input.setText(chapter_data.get("title") or "")
+            self.seq_input.setValue(int(chapter_data.get("sequence_number") or 1))
 
     def get_data(self):
         return {

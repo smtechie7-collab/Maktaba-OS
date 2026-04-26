@@ -54,3 +54,51 @@ Status: started
 
 - Added DB migration/WAL tests.
 - Remaining work: install/configure Python test runner, add smoke tests for CLI, preview rendering, missing dependency behavior, and packaged startup.
+
+## Phase A: Core Authoring Workflow
+Status: first slice implemented
+
+- Book list now uses database helper APIs instead of raw dashboard queries.
+- Books can be edited and deleted from the UI.
+- Chapters/elements can be edited, deleted, and moved up/down.
+- The app now tracks an active target chapter.
+- New content blocks save into the active chapter instead of silently going to the last chapter.
+- Chapter tree shows active chapter marker and active block counts.
+- Blocks can be selected from the tree, edited, moved up/down, duplicated, and soft-deleted.
+- Content blocks now have `sequence_number` through schema migration `003_add_block_sequence`.
+- Added database tests for book update/delete, chapter update/delete/reorder, and block duplicate/delete/reorder.
+- Added library search/filter.
+- Added empty-state labels for library and book structure.
+- Action buttons are now disabled when their required selection is missing.
+- Tree refresh now preserves the active chapter and selected block where possible.
+
+Remaining Phase A work:
+
+- Move book/chapter/block list loading and mutations to reusable background workers.
+- Add richer book metadata fields such as publisher, category, notes, and created/updated labels.
+- Add safer validation messages before saves/imports.
+
+## Phase UX: Modern Interaction Layer
+Status: first slice implemented
+
+- Reworked the global app stylesheet into a cleaner modern desktop authoring surface.
+- Added a top command/context bar above the editor.
+- Added active context display for book, chapter, and selected block.
+- Added command input for fast actions such as book, chapter, save, PDF, import, and search.
+- Added keyboard shortcuts:
+  - `Ctrl+N`: new book
+  - `Ctrl+Shift+N`: new chapter
+  - `Ctrl+S`: save block
+  - `Ctrl+F`: focus library search
+  - `Ctrl+K`: focus command input
+  - `Ctrl+P`: export PDF
+  - `Ctrl+I`: bulk import
+  - `Esc`: clear editor/edit mode
+
+Remaining Phase UX work:
+
+- Replace text-heavy controls with compact icon/tool buttons where PyQt icon support is available.
+- Add a proper command palette with fuzzy matching and visible action results.
+- Add split preview modes: selected chapter, full book, and print preview.
+- Add status/progress surfaces for async saves/imports/exports.
+- Clean component-level inline styles in editor/audio/properties panels.
