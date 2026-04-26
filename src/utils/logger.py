@@ -1,18 +1,16 @@
 import logging
-import os
-from datetime import datetime
+from pathlib import Path
+
+from src.core.paths import logs_dir
 
 def setup_logger(name: str, log_file: str = "maktaba.log", level=logging.INFO):
     """Function to setup as many loggers as you want."""
-    
-    # Create logs directory if it doesn't exist
-    os.makedirs("logs", exist_ok=True)
-    log_path = os.path.join("logs", log_file)
+    log_path = logs_dir() / log_file
 
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     # File handler
-    file_handler = logging.FileHandler(log_path)
+    file_handler = logging.FileHandler(Path(log_path), encoding="utf-8")
     file_handler.setFormatter(formatter)
 
     # Console handler

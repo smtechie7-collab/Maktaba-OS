@@ -9,6 +9,7 @@ requests>=2.31.0
 pytest>=8.0.0
 black>=24.1.0
 ruff>=0.2.0
+pyinstaller>=6.0.0
 
 # Database
 # sqlite3 is built-in, no extra dependency needed unless using specific drivers.

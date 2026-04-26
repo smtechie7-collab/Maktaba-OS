@@ -8,18 +8,25 @@ from jinja2 import Environment, FileSystemLoader
 
 try:
     from weasyprint import HTML, CSS
-except ImportError:
-    print("Warning: WeasyPrint not installed or GTK missing.")
+    WEASYPRINT_AVAILABLE = True
+except ImportError as exc:
+    HTML = None
+    CSS = None
+    WEASYPRINT_AVAILABLE = False
+    WEASYPRINT_IMPORT_ERROR = exc
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.core.config import load_config
 from src.data.database import DatabaseManager
 
 class PDFGenerator:
-    def __init__(self, template_dir="src/layout/templates", db_path="maktaba_production.db"):
-        self.env = Environment(loader=FileSystemLoader(template_dir))
+    def __init__(self, template_dir=None, db_path=None):
+        config = load_config()
+        self.template_dir = str(template_dir or config.template_dir)
+        self.env = Environment(loader=FileSystemLoader(self.template_dir))
         self.template = self.env.get_template("book_template.html")
-        self.db = DatabaseManager(db_path)
+        self.db = DatabaseManager(str(db_path or config.db_path))
 
     def generate_qr_base64(self, data: str) -> str:
         """Generates a QR Code and returns it as a Base64 PNG image string."""
@@ -35,6 +42,10 @@ class PDFGenerator:
 
     def generate_pdf(self, book_id: int, output_path: str, include_cover: bool = True, press_ready: bool = False, styles: dict = None):
         """Fetch book data and generate a PDF with Press-Ready Bleeds & Auto QR Codes."""
+        if not WEASYPRINT_AVAILABLE:
+            raise RuntimeError(
+                "WeasyPrint is required for PDF export. Install/bundle WeasyPrint and its Windows GTK dependencies."
+            ) from WEASYPRINT_IMPORT_ERROR
         
         # Set default styles if none provided
         if not styles:
@@ -104,7 +115,7 @@ class PDFGenerator:
         )
         
         # 5. Generate PDF
-        base_url = os.path.dirname(os.path.abspath(__file__)) + "/templates/"
+        base_url = self.template_dir
         
         HTML(string=full_html, base_url=base_url).write_pdf(
             output_path, 

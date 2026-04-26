@@ -2,15 +2,25 @@ import argparse
 import os
 import sys
 import logging
+
+from src.audio.processor import AudioProcessor
+from src.core.config import load_config
+from src.core.errors import install_global_exception_handler
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
-from src.audio.processor import AudioProcessor
-from src.utils.md_exporter import MarkdownExporter
 from src.ui.dashboard import main as launch_gui
+from src.utils.md_exporter import MarkdownExporter
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("Maktaba-OS")
+
+
+def ensure_output_parent(output_path: str):
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 
 def list_books(db: DatabaseManager):
     """List all books in the database."""
@@ -18,64 +28,70 @@ def list_books(db: DatabaseManager):
         cursor = conn.cursor()
         cursor.execute("SELECT id, title, author, language FROM Books")
         books = cursor.fetchall()
-        
-        print("\n📚 Available Books in Maktaba-OS:")
+
+        print("\nAvailable Books in Maktaba-OS:")
         print("-" * 50)
         for book in books:
-            print(f"ID: {book['id']} | Title: {book['title']} | Author: {book['author']} | Lang: {book['language']}")
+            print(
+                f"ID: {book['id']} | Title: {book['title']} | "
+                f"Author: {book['author']} | Lang: {book['language']}"
+            )
         print("-" * 50)
 
+
 def main():
+    install_global_exception_handler()
+    config = load_config()
     parser = argparse.ArgumentParser(description="Maktaba-OS: Islamic Digital Publishing Engine CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Command: list
     subparsers.add_parser("list", help="List all books in the database")
 
-    # Command: export-pdf
     pdf_parser = subparsers.add_parser("export-pdf", help="Generate a PDF for a specific book")
     pdf_parser.add_argument("--id", type=int, required=True, help="Book ID to export")
-    pdf_parser.add_argument("--output", type=str, default="output/book_export.pdf", help="Output PDF path")
+    pdf_parser.add_argument(
+        "--output",
+        type=str,
+        default=str(config.output_dir / "book_export.pdf"),
+        help="Output PDF path",
+    )
 
-    # Command: export-md
     md_parser = subparsers.add_parser("export-md", help="Export a book to Markdown")
     md_parser.add_argument("--id", type=int, required=True, help="Book ID to export")
-    md_parser.add_argument("--output", type=str, default="output/book_export.md", help="Output MD path")
+    md_parser.add_argument(
+        "--output",
+        type=str,
+        default=str(config.output_dir / "book_export.md"),
+        help="Output MD path",
+    )
 
-    # Command: process-audio
     audio_parser = subparsers.add_parser("process-audio", help="Merge and normalize audio files")
     audio_parser.add_argument("--input", nargs="+", required=True, help="List of input audio files")
     audio_parser.add_argument("--output", type=str, required=True, help="Output merged audio path")
 
-    # Command: gui
     subparsers.add_parser("gui", help="Launch the Maktaba-OS Dashboard")
 
     args = parser.parse_args()
-
-    db = DatabaseManager("maktaba_production.db")
+    db = DatabaseManager(str(config.db_path))
 
     if args.command == "list":
         list_books(db)
-
     elif args.command == "export-pdf":
-        os.makedirs("output", exist_ok=True)
+        ensure_output_parent(args.output)
         generator = PDFGenerator()
         generator.generate_pdf(args.id, args.output)
-
     elif args.command == "export-md":
-        os.makedirs("output", exist_ok=True)
+        ensure_output_parent(args.output)
         exporter = MarkdownExporter()
         exporter.export_book(args.id, args.output)
-
     elif args.command == "process-audio":
         processor = AudioProcessor()
         processor.process_chapters(args.input, args.output)
-
     elif args.command == "gui":
         launch_gui()
-
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

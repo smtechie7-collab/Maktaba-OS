@@ -1,0 +1,23 @@
+QMainWindow { background-color: #F3F4F6; }
+QWidget { color: #000000; font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 13px; }
+QLabel { font-weight: bold; color: #111111; }
+QDockWidget { font-weight: bold; color: #000000; font-size: 14px; }
+QDockWidget::title { background: #E5E7EB; text-align: left; padding: 8px; border: 1px solid #D1D5DB; color: #000000; }
+QListWidget, QTreeWidget { background-color: #FFFFFF; border: 2px solid #A0A0A0; color: #000000; font-weight: 600; font-size: 14px; padding: 5px; border-radius: 4px; }
+QListWidget::item, QTreeWidget::item { padding: 10px; border-bottom: 1px solid #E5E7EB; }
+QListWidget::item:selected, QTreeWidget::item:selected { background-color: #0066CC; color: #FFFFFF; }
+QPushButton { background-color: #E5E7EB; border: 1px solid #9CA3AF; padding: 8px; border-radius: 4px; color: #000000; font-weight: bold; font-size: 13px; }
+QPushButton:hover { background-color: #D1D5DB; }
+QPushButton#primaryBtn { background-color: #0066CC; color: white; border: none; font-size: 14px; }
+QPushButton#primaryBtn:hover { background-color: #0052A3; }
+QLineEdit, QTextEdit, QTextBrowser { background-color: #FFFFFF; border: 2px solid #A0A0A0; padding: 6px; border-radius: 3px; color: #000000; font-weight: bold; }
+QLineEdit:focus, QTextEdit:focus, QTextBrowser:focus { border: 2px solid #0066CC; }
+QTabWidget::pane { border: 2px solid #A0A0A0; background: #F9FAFB; }
+QTabBar::tab { background: #E5E7EB; color: #333333; padding: 10px 20px; border: 1px solid #A0A0A0; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
+QTabBar::tab:selected { background: #0066CC; color: #FFFFFF; }
+QMenuBar { background-color: #E5E7EB; color: #000000; font-weight: bold; font-size: 13px; border-bottom: 1px solid #A0A0A0; }
+QMenuBar::item { padding: 6px 12px; background: transparent; }
+QMenuBar::item:selected { background-color: #D1D5DB; }
+QMenu { background-color: #FFFFFF; color: #000000; border: 1px solid #A0A0A0; font-weight: bold; }
+QMenu::item { padding: 8px 24px; }
+QMenu::item:selected { background-color: #0066CC; color: #FFFFFF; }

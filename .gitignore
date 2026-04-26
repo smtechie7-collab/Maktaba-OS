@@ -7,11 +7,18 @@ venv/
 
 # Database
 *.sqlite3
+*.sqlite
 *.db
+*.db-shm
+*.db-wal
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+logs/
+*.log
 
 # Output
 output/

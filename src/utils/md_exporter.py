@@ -4,14 +4,16 @@ import json
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.core.config import load_config
 from src.data.database import DatabaseManager
 from src.utils.logger import setup_logger
 
 logger = setup_logger("MarkdownExporter")
 
 class MarkdownExporter:
-    def __init__(self, db_path="maktaba_production.db"):
-        self.db = DatabaseManager(db_path)
+    def __init__(self, db_path=None):
+        config = load_config()
+        self.db = DatabaseManager(str(db_path or config.db_path))
 
     def export_book(self, book_id: int, output_path: str):
         """Export book content to a Markdown file."""
@@ -64,7 +66,9 @@ class MarkdownExporter:
             md_content += "---\n\n"
 
         # 3. Save to file
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(md_content)
         

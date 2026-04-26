@@ -1,11 +1,13 @@
 import os
 import sys
 import json
+import shutil
 from pydub import AudioSegment
 from typing import List, Dict, Optional
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.core.paths import binary_path
 from src.utils.logger import setup_logger
 
 logger = setup_logger("AudioProcessor")
@@ -13,6 +15,31 @@ logger = setup_logger("AudioProcessor")
 class AudioProcessor:
     def __init__(self, target_lufs: float = -16.0):
         self.target_lufs = target_lufs
+        self._configure_ffmpeg()
+
+    def _configure_ffmpeg(self) -> None:
+        bundled_ffmpeg = binary_path("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if bundled_ffmpeg.exists():
+            AudioSegment.converter = str(bundled_ffmpeg)
+            logger.info(f"Using bundled FFmpeg: {bundled_ffmpeg}")
+            return
+
+        system_ffmpeg = shutil.which("ffmpeg")
+        if system_ffmpeg:
+            AudioSegment.converter = system_ffmpeg
+            logger.info(f"Using system FFmpeg: {system_ffmpeg}")
+            return
+
+        logger.warning("FFmpeg was not found. Audio export will fail until FFmpeg is bundled or installed.")
+
+    def _ensure_ffmpeg_available(self) -> None:
+        if not AudioSegment.converter or not os.path.exists(AudioSegment.converter):
+            system_ffmpeg = shutil.which("ffmpeg")
+            if not system_ffmpeg:
+                raise RuntimeError(
+                    "FFmpeg is required for audio export. Bundle ffmpeg in the app bin folder or install it on PATH."
+                )
+            AudioSegment.converter = system_ffmpeg
 
     def normalize_audio(self, audio: AudioSegment) -> AudioSegment:
         """Normalize audio to the target LUFS (approximate using dBFS)."""
@@ -25,6 +52,7 @@ class AudioProcessor:
             logger.error("No input files provided.")
             return
 
+        self._ensure_ffmpeg_available()
         logger.info(f"Legacy Mode: Processing {len(input_files)} audio files...")
         combined_audio = None
 
@@ -42,7 +70,9 @@ class AudioProcessor:
 
         if combined_audio:
             combined_audio = self.normalize_audio(combined_audio)
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            output_parent = os.path.dirname(output_path)
+            if output_parent:
+                os.makedirs(output_parent, exist_ok=True)
             combined_audio.export(output_path, format="mp3", bitrate="192k")
             logger.info("Legacy audio processing complete.")
 
@@ -52,6 +82,7 @@ class AudioProcessor:
         Builds multiple audio files based on a JSON recipe. Engine is now agnostic.
         """
         logger.info("Starting Config-Driven Audio Routing...")
+        self._ensure_ffmpeg_available()
         os.makedirs(output_dir, exist_ok=True)
 
         for playlist_name, config in recipe.items():

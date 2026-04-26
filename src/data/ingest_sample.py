@@ -1,12 +1,15 @@
-from database import DatabaseManager
 import logging
+
+from src.core.config import load_config
+from src.data.database import DatabaseManager
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Ingestor")
 
 def ingest_sample_data():
-    db = DatabaseManager("maktaba_production.db")
+    config = load_config()
+    db = DatabaseManager(str(config.db_path))
     
     # 1. Add a Book
     book_id = db.add_book(

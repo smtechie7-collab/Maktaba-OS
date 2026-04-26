@@ -2,87 +2,122 @@ import sqlite3
 import json
 import os
 import sys
-from typing import Dict, Any, List, Optional
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Callable
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from src.core.paths import database_path
 from src.utils.logger import setup_logger
 
 logger = setup_logger("Database")
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "maktaba_production.db"):
-        self.db_path = db_path
+    CURRENT_SCHEMA_VERSION = 2
+
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = str(Path(db_path).expanduser().resolve()) if db_path else str(database_path())
         self._init_db()
 
     def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_db(self):
-        """Initialize the database with the required tables."""
+        """Initialize the database and apply versioned migrations."""
         logger.info(f"Initializing database at {self.db_path}")
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # 1. Books Table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Books (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    author TEXT,
-                    language TEXT DEFAULT 'en',
-                    metadata JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
-            # 2. Chapters Table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Chapters (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    book_id INTEGER,
-                    title TEXT NOT NULL,
-                    sequence_number INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (book_id) REFERENCES Books (id) ON DELETE CASCADE
-                )
-            ''')
-            
-            # --- V5.0 MIGRATION: Add chapter_type safely if it doesn't exist ---
-            try:
-                cursor.execute("ALTER TABLE Chapters ADD COLUMN chapter_type TEXT DEFAULT 'Content Chapter'")
-            except sqlite3.OperationalError:
-                pass # Column already exists, safe to ignore
-
-            # 3. Content_Blocks Table (Hybrid JSON Storage)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Content_Blocks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chapter_id INTEGER,
-                    content_type TEXT DEFAULT 'text',
-                    content_data JSON NOT NULL,
-                    version INTEGER DEFAULT 1,
-                    is_active BOOLEAN DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (chapter_id) REFERENCES Chapters (id) ON DELETE CASCADE
-                )
-            ''')
-
-            # 4. Footnotes Table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Footnotes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    block_id INTEGER,
-                    marker TEXT,
-                    content JSON NOT NULL,
-                    FOREIGN KEY (block_id) REFERENCES Content_Blocks (id) ON DELETE CASCADE
-                )
-            ''')
-            
+            self._ensure_migration_table(conn)
+            self._run_migrations(conn)
             conn.commit()
+
+    def _ensure_migration_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+    def _schema_version(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").fetchone()
+        return int(row["version"] if row else 0)
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        migrations: List[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
+            (1, "initial_schema", self._migration_001_initial_schema),
+            (2, "add_chapter_type", self._migration_002_add_chapter_type),
+        ]
+        current_version = self._schema_version(conn)
+
+        for version, name, migration in migrations:
+            if version <= current_version:
+                continue
+            logger.info(f"Applying database migration {version}: {name}")
+            migration(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+                (version, name),
+            )
+
+    def _migration_001_initial_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Books (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT,
+                language TEXT DEFAULT 'en',
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Chapters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER,
+                title TEXT NOT NULL,
+                sequence_number INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (book_id) REFERENCES Books (id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Content_Blocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chapter_id INTEGER,
+                content_type TEXT DEFAULT 'text',
+                content_data JSON NOT NULL,
+                version INTEGER DEFAULT 1,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (chapter_id) REFERENCES Chapters (id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Footnotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                block_id INTEGER,
+                marker TEXT,
+                content JSON NOT NULL,
+                FOREIGN KEY (block_id) REFERENCES Content_Blocks (id) ON DELETE CASCADE
+            )
+        """)
+
+    def _migration_002_add_chapter_type(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(Chapters)").fetchall()
+        }
+        if "chapter_type" not in columns:
+            conn.execute("ALTER TABLE Chapters ADD COLUMN chapter_type TEXT DEFAULT 'Content Chapter'")
 
     def add_book(self, title: str, author: str = None, language: str = 'en', metadata: Dict = None) -> int:
         with self._get_connection() as conn:

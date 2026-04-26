@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QListWidget,
                              QMessageBox, QLineEdit, QTreeWidget, QTreeWidgetItem,
                              QTabWidget, QDockWidget, QFileDialog, QTextBrowser, QMenuBar, QMenu)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer
 from PyQt6.QtGui import QAction
 
 try:
@@ -21,11 +21,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
+from src.core.config import load_config
+from src.core.errors import install_global_exception_handler
 from src.ui.dialogs import BookDialog, ChapterDialog, BulkImportDialog
 from src.ui.components.editor_panel import EditorPanel
 from src.ui.components.audio_panel import AudioPanel
 from src.ui.components.properties_panel import PropertiesPanel
 from src.ui.components.web_bridge import WebBridge
+from src.ui.styles.style_loader import load_stylesheet
 
 class PDFWorker(QThread):
     finished = pyqtSignal(bool, str)
@@ -40,42 +43,97 @@ class PDFWorker(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
+class PreviewWorker(QThread):
+    finished = pyqtSignal(int, bool, str)
+
+    def __init__(self, request_id, book_id, db_path, template_dir, draft_data, styles):
+        super().__init__()
+        self.request_id = request_id
+        self.book_id = book_id
+        self.db_path = db_path
+        self.template_dir = template_dir
+        self.draft_data = draft_data
+        self.styles = styles
+
+    def run(self):
+        try:
+            from jinja2 import Environment, FileSystemLoader
+
+            db = DatabaseManager(self.db_path)
+            env = Environment(loader=FileSystemLoader(self.template_dir))
+            template = env.get_template("book_template.html")
+
+            with db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT title, author FROM Books WHERE id = ?", (self.book_id,))
+                book_info = cursor.fetchone()
+
+            content_blocks = db.get_book_content(self.book_id)
+            chapters_data = []
+            current_chapter_id = None
+            current_chapter_dict = None
+
+            for block in content_blocks:
+                if block['chapter_id'] != current_chapter_id:
+                    current_chapter_id = block['chapter_id']
+                    current_chapter_dict = {
+                        "chapter_title": block['chapter_title'],
+                        "chapter_type": block.get('chapter_type', 'Content Chapter'),
+                        "blocks": []
+                    }
+                    chapters_data.append(current_chapter_dict)
+
+                if block['block_id']:
+                    current_chapter_dict['blocks'].append({
+                        "block_id": block['block_id'],
+                        "content_data": json.loads(block['content_data']),
+                        "content_type": block['content_type']
+                    })
+
+            has_draft = any([
+                self.draft_data.get('ar'),
+                self.draft_data.get('ur'),
+                self.draft_data.get('guj'),
+                self.draft_data.get('en')
+            ])
+
+            if has_draft and chapters_data:
+                chapters_data[-1]['blocks'].append({
+                    "block_id": "draft",
+                    "content_data": self.draft_data,
+                    "content_type": "text"
+                })
+
+            html_content = template.render(
+                book_title=book_info['title'] if book_info else "Preview",
+                chapters=chapters_data,
+                margins=self.styles.get("margins"),
+                fonts=self.styles.get("fonts")
+            )
+            self.finished.emit(self.request_id, True, html_content)
+        except Exception as e:
+            self.finished.emit(self.request_id, False, str(e))
+
 class MaktabaDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.db = DatabaseManager("maktaba_production.db")
+        self.config = load_config()
+        self.db = DatabaseManager(str(self.config.db_path))
         self.current_book_id = None
+        self.preview_request_id = 0
+        self.preview_worker = None
+        self.preview_pending = False
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.setInterval(400)
+        self.preview_timer.timeout.connect(self._start_live_preview)
         self.init_ui()
 
     def init_ui(self):
         self.setWindowTitle("Maktaba-OS Studio | Pro V5.0 Edition")
         self.setMinimumSize(1400, 900)
         
-        self.setStyleSheet("""
-            QMainWindow { background-color: #F3F4F6; }
-            QWidget { color: #000000; font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 13px; }
-            QLabel { font-weight: bold; color: #111111; }
-            QDockWidget { font-weight: bold; color: #000000; font-size: 14px; }
-            QDockWidget::title { background: #E5E7EB; text-align: left; padding: 8px; border: 1px solid #D1D5DB; color: #000000; }
-            QListWidget, QTreeWidget { background-color: #FFFFFF; border: 2px solid #A0A0A0; color: #000000; font-weight: 600; font-size: 14px; padding: 5px; border-radius: 4px; }
-            QListWidget::item, QTreeWidget::item { padding: 10px; border-bottom: 1px solid #E5E7EB; }
-            QListWidget::item:selected, QTreeWidget::item:selected { background-color: #0066CC; color: #FFFFFF; }
-            QPushButton { background-color: #E5E7EB; border: 1px solid #9CA3AF; padding: 8px; border-radius: 4px; color: #000000; font-weight: bold; font-size: 13px; }
-            QPushButton:hover { background-color: #D1D5DB; }
-            QPushButton#primaryBtn { background-color: #0066CC; color: white; border: none; font-size: 14px;}
-            QPushButton#primaryBtn:hover { background-color: #0052A3; }
-            QLineEdit, QTextEdit, QTextBrowser { background-color: #FFFFFF; border: 2px solid #A0A0A0; padding: 6px; border-radius: 3px; color: #000000; font-weight: bold; }
-            QLineEdit:focus, QTextEdit:focus, QTextBrowser:focus { border: 2px solid #0066CC; }
-            QTabWidget::pane { border: 2px solid #A0A0A0; background: #F9FAFB; }
-            QTabBar::tab { background: #E5E7EB; color: #333333; padding: 10px 20px; border: 1px solid #A0A0A0; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; font-weight: bold; }
-            QTabBar::tab:selected { background: #0066CC; color: #FFFFFF; }
-            QMenuBar { background-color: #E5E7EB; color: #000000; font-weight: bold; font-size: 13px; border-bottom: 1px solid #A0A0A0; }
-            QMenuBar::item { padding: 6px 12px; background: transparent; }
-            QMenuBar::item:selected { background-color: #D1D5DB; }
-            QMenu { background-color: #FFFFFF; color: #000000; border: 1px solid #A0A0A0; font-weight: bold; }
-            QMenu::item { padding: 8px 24px; }
-            QMenu::item:selected { background-color: #0066CC; color: #FFFFFF; }
-        """)
+        self.setStyleSheet(load_stylesheet("app.qss"))
 
         self.central_tabs = QTabWidget()
         self.editor_panel = EditorPanel()
@@ -186,12 +244,50 @@ class MaktabaDashboard(QMainWindow):
                 self.statusBar().showMessage(f"Loaded Block #{block_id} for editing.", 3000)
                 break
 
-    def update_live_preview(self):
+    def update_live_preview(self, *args):
+        if not self.current_book_id: return
+        self.preview_timer.start()
+
+    def _start_live_preview(self):
+        if not self.current_book_id:
+            return
+
+        if self.preview_worker and self.preview_worker.isRunning():
+            self.preview_pending = True
+            self.preview_request_id += 1
+            return
+
+        self.preview_request_id += 1
+        request_id = self.preview_request_id
+        draft_data = self.editor_panel.get_data()
+        styles = self.properties_panel.get_styles()
+        self.preview_worker = PreviewWorker(
+            request_id=request_id,
+            book_id=self.current_book_id,
+            db_path=str(self.config.db_path),
+            template_dir=str(self.config.template_dir),
+            draft_data=draft_data,
+            styles=styles
+        )
+        self.preview_worker.finished.connect(self._handle_preview_finished)
+        self.preview_worker.start()
+
+    def _handle_preview_finished(self, request_id, success, message):
+        if request_id == self.preview_request_id:
+            if success:
+                self.preview_browser.setHtml(message)
+            else:
+                print(f"Live Preview Error: {message}")
+
+        if self.preview_pending:
+            self.preview_pending = False
+            self.preview_timer.start()
+
+    def update_live_preview_sync(self):
         if not self.current_book_id: return
         try:
             from jinja2 import Environment, FileSystemLoader
-            template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src/layout/templates'))
-            env = Environment(loader=FileSystemLoader(template_dir))
+            env = Environment(loader=FileSystemLoader(str(self.config.template_dir)))
             template = env.get_template("book_template.html")
             
             with self.db._get_connection() as conn:
@@ -368,6 +464,7 @@ class MaktabaDashboard(QMainWindow):
         self.worker.start()
 
 def main():
+    install_global_exception_handler()
     app = QApplication(sys.argv)
     window = MaktabaDashboard()
     window.show()
