@@ -91,7 +91,8 @@ class PDFGenerator:
                 current_chapter_dict['blocks'].append({
                     "block_id": block['block_id'],
                     "content_data": json.loads(block['content_data']),
-                    "content_type": block['content_type']
+                    "content_type": block['content_type'],
+                    "footnotes": block.get("footnotes", [])
                 })
 
         # 3. Auto Generate QR Codes based on Day/Track metadata

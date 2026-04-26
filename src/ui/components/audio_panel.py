@@ -4,12 +4,26 @@ import json
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QListWidget, QFileDialog, QMessageBox, 
                              QGroupBox, QSpinBox, QSplitter, QAbstractItemView, QInputDialog)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QObject, pyqtSlot
 from PyQt6.QtGui import QIcon
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebChannel import QWebChannel
+    WEB_ENGINE_AVAILABLE = True
+except ImportError:
+    WEB_ENGINE_AVAILABLE = False
 
 # Add root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 from src.audio.processor import AudioProcessor
+
+class AudioWebBridge(QObject):
+    time_clicked = pyqtSignal(float)
+
+    @pyqtSlot(float)
+    def on_time_clicked(self, current_time):
+        self.time_clicked.emit(current_time)
 
 class VisualAudioWorker(QThread):
     """Background worker for stitching the visual timeline"""
@@ -32,6 +46,8 @@ class VisualAudioWorker(QThread):
             self.finished.emit(False, str(e))
 
 class AudioPanel(QWidget):
+    audio_time_clicked = pyqtSignal(float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.init_ui()
@@ -41,12 +57,54 @@ class AudioPanel(QWidget):
         btn.style().unpolish(btn)
         btn.style().polish(btn)
 
+    def setup_waveform_view(self, layout):
+        """Injects wavesurfer.js via WebEngine for a Pro Studio feel."""
+        if not WEB_ENGINE_AVAILABLE:
+            fallback = QLabel("Waveform visualizer requires PyQt6-WebEngine.")
+            fallback.setStyleSheet("color: #94A3B8; padding: 20px; border: 1px dashed #475569;")
+            layout.insertWidget(1, fallback)
+            return
+            
+        self.waveform_view = QWebEngineView()
+        self.waveform_view.setFixedHeight(160)
+        
+        self.audio_bridge = AudioWebBridge()
+        self.audio_bridge.time_clicked.connect(self.audio_time_clicked.emit)
+        self.web_channel = QWebChannel()
+        self.web_channel.registerObject("audioBridge", self.audio_bridge)
+        self.waveform_view.page().setWebChannel(self.web_channel)
+
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+            <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+            <style>body { background: #1E293B; color: #94A3B8; margin: 0; padding: 20px; font-family: sans-serif; overflow: hidden; }</style>
+        </head>
+        <body>
+            <div id="waveform"></div>
+            <p id="status-text" style="text-align:center; font-size:12px; margin-top: 15px;">Select a track from the library to view waveform & word-sync properties.</p>
+            <script>
+                const wavesurfer = WaveSurfer.create({ container: '#waveform', waveColor: '#475569', progressColor: '#3B82F6', barWidth: 2, height: 80 });
+                new QWebChannel(qt.webChannelTransport, function(channel) { window.audioBridge = channel.objects.audioBridge; });
+                wavesurfer.on('interaction', () => { if (window.audioBridge) window.audioBridge.on_time_clicked(wavesurfer.getCurrentTime()); document.getElementById('status-text').innerText = "Timeline Sync: " + wavesurfer.getCurrentTime().toFixed(2) + "s"; });
+            </script>
+        </body>
+        </html>
+        """
+        self.waveform_view.setHtml(html)
+        layout.insertWidget(1, self.waveform_view)
+
     def init_ui(self):
         layout = QVBoxLayout(self)
         
         header = QLabel("🎚️ Visual Audio Router (Timeline)")
         header.setObjectName("panelHeader")
         layout.addWidget(header)
+
+        # Inject the interactive Waveform UI
+        self.setup_waveform_view(layout)
 
         # --- SETTINGS BAR ---
         settings_group = QGroupBox("Master Export Settings")
@@ -154,6 +212,10 @@ class AudioPanel(QWidget):
                     item = QListWidgetItem(f"🎵 {filename}")
                     item.setData(Qt.ItemDataRole.UserRole, f) # Store full path invisibly
                     self.library_list.addItem(item)
+                    
+            # Auto-preview the first loaded file in the waveform if available
+            if WEB_ENGINE_AVAILABLE and files:
+                self.waveform_view.page().runJavaScript(f"wavesurfer.load('file:///{files[0].replace(chr(92), '/')}');")
 
     def clear_timeline(self):
         self.timeline_list.clear()

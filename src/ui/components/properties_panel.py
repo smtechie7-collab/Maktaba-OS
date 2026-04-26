@@ -1,9 +1,11 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QGroupBox, 
                              QFormLayout, QComboBox, QSlider, QLabel, 
                              QCheckBox, QPushButton, QSpinBox, QScrollArea)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 
 class PropertiesPanel(QWidget):
+    properties_changed = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.init_ui()
@@ -104,6 +106,18 @@ class PropertiesPanel(QWidget):
         layout.addWidget(self.tabs)
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
+        
+        # --- WIRE LIVE PREVIEW TRIGGERS ---
+        for combo in (self.ar_font, self.ur_font, self.guj_font, self.theme_combo):
+            combo.currentTextChanged.connect(lambda _: self.properties_changed.emit())
+            
+        for slider in (self.ar_size, self.ur_size, self.guj_size):
+            slider.valueChanged.connect(lambda _: self.properties_changed.emit())
+            
+        for spinbox in (self.m_top, self.m_bot, self.m_left, self.m_right, self.m_gut):
+            spinbox.valueChanged.connect(lambda _: self.properties_changed.emit())
+            
+        self.holy_checkbox.stateChanged.connect(lambda _: self.properties_changed.emit())
 
     def get_styles(self):
         return {

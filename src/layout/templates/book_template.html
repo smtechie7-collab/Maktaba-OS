@@ -20,13 +20,40 @@
                 margin-left: {{ margins.left }}mm;
                 margin-right: {{ margins.right }}mm;
                 
+                /* PROFESSIONAL PAGE BORDERS */
+                border-top: 3px double #176B87;
+                border-bottom: 3px double #176B87;
+                border-left: 1px solid #CBD5E1;
+                border-right: 1px solid #CBD5E1;
+                padding: 4mm;
+                
                 {% if press_ready %}
                 /* Enables professional cutting marks and 3mm bleed for printing press */
                 marks: crop cross;
                 bleed: 3mm;
                 {% endif %}
                 
-                @bottom-center { content: counter(page); font-size: 10pt; color: #555; }
+                @top-center { 
+                    content: "{{ book_title }}"; 
+                    font-family: '{{ fonts.arabic }}', serif; 
+                    font-size: 10pt; 
+                    color: #176B87; 
+                    padding-bottom: 5px;
+                }
+                
+                @footnote {
+                    border-top: 1pt solid #000;
+                    margin-top: 15px;
+                    padding-top: 5px;
+                }
+                
+                @bottom-center { 
+                    content: "- " counter(page) " -"; 
+                    font-size: 11pt; 
+                    color: #176B87; 
+                    font-weight: bold;
+                    padding-top: 5px;
+                }
             }
             body { font-family: sans-serif; background-color: #ffffff; color: #000000; }
             .cover-page { page-break-before: always; }
@@ -38,6 +65,17 @@
                 position: static !important; overflow: visible !important; transform: none !important;
             }
             .page-content { overflow: visible !important; height: auto !important; }
+            
+            /* WEASYPRINT FOOTNOTE ENGINE */
+            .weasy-footnote {
+                float: footnote;
+                font-size: 10pt;
+                color: #333;
+                text-align: justify;
+                line-height: 1.4;
+                margin-bottom: 4px;
+            }
+            .footnote-marker { font-size: 0.8em; vertical-align: super; color: #185FA5; font-weight: bold; margin-right: 2px;}
         }
 
         /* =========================================================
@@ -88,7 +126,6 @@
             .page-content::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
             .page-content::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
             
-            }
             
             /* WYSIWYG Editable Blocks */
             .content-block {
@@ -130,10 +167,28 @@
 
         /* --- CHAPTER TITLE --- */
         .chapter-title {
-            text-align: center; font-size: 22pt; font-weight: bold;
-            margin-top: 20px; margin-bottom: 10px; 
-            color: #333; border-bottom: 2px solid #ccc; padding-bottom: 10px;
+            text-align: center; font-size: 26pt; font-weight: bold;
+            font-family: '{{ fonts.arabic }}', serif;
+            margin: 40px auto 30px auto; color: #0F172A;
+            padding: 15px 50px;
+            background-color: #F8FAFC;
+            border: 2px solid #176B87;
+            border-radius: 12px;
+            box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 4px #176B87;
+            position: relative;
+            display: table; /* Centers the box nicely and fits content */
         }
+        .chapter-title::before, .chapter-title::after {
+            content: '۞';
+            color: #176B87;
+            font-size: 22pt;
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: normal;
+        }
+        .chapter-title::before { left: 15px; }
+        .chapter-title::after { right: 15px; }
 
         /* --- CONTENT BLOCKS --- */
         .content-block {
@@ -156,6 +211,15 @@
             font-family: '{{ fonts.arabic }}', serif; font-size: {{ fonts.arabic_size }}pt;
             direction: rtl; text-align: right; line-height: 2.2;
             color: #000; border-right: 3px solid #EF9F27; padding-right: 15px; margin-bottom: 10px;
+        }
+        .row-ar .footnote-callout { font-size: 14pt; color: #D32F2F; vertical-align: super; }
+        
+        /* STUDIO SCREEN FOOTNOTES (Inline Fallback) */
+        @media screen {
+            .weasy-footnote {
+                display: block; font-size: 11pt; color: #666; background: #F8FAFC; 
+                border-left: 3px solid #CBD5E1; padding: 8px 12px; margin-top: 10px; border-radius: 4px;
+            }
         }
         .row-ur {
             font-family: '{{ fonts.urdu }}', serif; font-size: {{ fonts.urdu_size }}pt;
@@ -183,6 +247,28 @@
         .main-book-author {
             font-size: 1.3em; color: #718096; margin-top: 0; font-style: italic;
         }
+
+        /* --- WORD-BY-WORD (KARAOKE) SYNC --- */
+        .word-by-word-container {
+            direction: rtl; text-align: right; margin-bottom: 15px; line-height: 1.5;
+        }
+        .word-box {
+            display: inline-block; vertical-align: top; text-align: center;
+            margin: 10px 12px; min-width: 50px; padding-bottom: 5px;
+            border-bottom: 1px dotted #cbd5e1;
+        }
+        .word-ar {
+            font-family: '{{ fonts.arabic }}', serif; font-size: {{ fonts.arabic_size }}pt;
+            color: #0f172a; margin-bottom: 8px; font-weight: bold;
+        }
+        .word-translit {
+            font-family: '{{ fonts.gujarati }}', sans-serif; font-size: {{ fonts.gujarati_size }}pt;
+            color: #176B87; margin-bottom: 4px;
+        }
+        .word-ur {
+            font-family: '{{ fonts.urdu }}', serif; font-size: {{ fonts.urdu_size - 2 }}pt;
+            color: #475569;
+        }
         @media print {
             .global-book-header { page-break-after: always; border-bottom: none; }
         }
@@ -191,7 +277,8 @@
 <body>
 
     <!-- 3D Book Container for Screen -->
-    <div class="book-container">
+    <div id="flipbook-wrapper">
+        <div id="flipbook">
         
         <!-- Main Book Header (Cover, Title, Author) -->
         <div class="global-book-header">
@@ -222,8 +309,8 @@
 
                 {% for block in chapter.blocks %}
                     <div class="content-block {% if block.block_id == 'draft' %}content-block-draft{% endif %}">
-                        {% if block.content_data.ar %}<h2 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)">{{ block.content_data.ar }}</h2>{% endif %}
-                        {% if block.content_data.en %}<h3 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)">{{ block.content_data.en }}</h3>{% endif %}
+                        {% if block.content_data.ar %}<h2 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)">{{ block.content_data.ar | safe }}</h2>{% endif %}
+                        {% if block.content_data.en %}<h3 class="editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)">{{ block.content_data.en | safe }}</h3>{% endif %}
                         <div class="save-badge" id="badge-{{ block.block_id }}">Saved ✓</div>
                     </div>
                 {% endfor %}
@@ -244,16 +331,43 @@
             {% for block in chapter.blocks %}
                 {% set day_theme = block.content_data.metadata.day.split(' ')[0] if block.content_data.metadata else 'All' %}
                 <div class="content-block theme-{{ day_theme }} {% if block.block_id == 'draft' %}content-block-draft{% endif %}">
-                    {% if block.content_data.ar %}<div class="row-ar editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ar }}</div>{% endif %}
-                    {% if block.content_data.ur %}<div class="row-ur editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ur', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ur }}</div>{% endif %}
-                    {% if block.content_data.guj %}<div class="row-gu editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'guj', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.guj }}</div>{% endif %}
-                    {% if block.content_data.en %}<div class="row-hn editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.en }}</div>{% endif %}
+                    
+                    {% if block.content_data.words %}
+                        <!-- WORD-BY-WORD RENDERING -->
+                        <div class="word-by-word-container">
+                            {% for word in block.content_data.words %}
+                                <div class="word-box">
+                                    {% if word.ar %}<div class="word-ar">{{ word.ar | safe }}</div>{% endif %}
+                                    {% if word.guj %}<div class="word-translit">{{ word.guj | safe }}</div>
+                                    {% elif word.en %}<div class="word-translit">{{ word.en | safe }}</div>{% endif %}
+                                    {% if word.ur %}<div class="word-ur">{{ word.ur | safe }}</div>{% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <!-- STANDARD PARAGRAPH RENDERING -->
+                        {% if block.content_data.ar %}<div class="row-ar editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ar', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ar | safe }}</div>{% endif %}
+                        {% if block.content_data.ur %}<div class="row-ur editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'ur', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.ur | safe }}</div>{% endif %}
+                        {% if block.content_data.guj %}<div class="row-gu editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'guj', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.guj | safe }}</div>{% endif %}
+                        {% if block.content_data.en %}<div class="row-hn editable-text" contenteditable="plaintext-only" onblur="saveEdit('{{ block.block_id }}', 'en', this)" onclick="notifySelection('{{ block.block_id }}')">{{ block.content_data.en | safe }}</div>{% endif %}
+                    {% endif %}
+                    
+                    {% if block.footnotes %}
+                        {% for fn in block.footnotes %}
+                        <div class="weasy-footnote">
+                            <span class="footnote-marker">{{ fn.marker }}</span>
+                            {% if fn.content.ar %}<span dir="rtl" style="font-family: '{{ fonts.arabic }}', serif;">{{ fn.content.ar }}</span>{% endif %}
+                            {% if fn.content.en %}<span dir="ltr">| {{ fn.content.en }}</span>{% endif %}
+                        </div>
+                        {% endfor %}
+                    {% endif %}
                     <div class="save-badge" id="badge-{{ block.block_id }}">Saved ✓</div>
                 </div>
             {% endfor %}
         {% endif %}
 
     {% endfor %}
+        </div>
     </div>
 
     <!-- WebBridge JavaScript Logic -->

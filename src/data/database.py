@@ -257,6 +257,58 @@ class DatabaseManager:
                 (chapter["sequence_number"], target["id"]),
             )
 
+    def reorder_chapter(self, chapter_id: int, target_id: int, position: str) -> None:
+        """Reorders a chapter above or below a target chapter."""
+        with self._get_connection() as conn:
+            target = conn.execute("SELECT book_id, sequence_number FROM Chapters WHERE id = ?", (target_id,)).fetchone()
+            if not target: return
+            
+            book_id = target["book_id"]
+            target_seq = target["sequence_number"]
+            
+            if position == "above":
+                conn.execute("UPDATE Chapters SET sequence_number = sequence_number + 1 WHERE book_id = ? AND sequence_number >= ?", (book_id, target_seq))
+                new_seq = target_seq
+            else:
+                conn.execute("UPDATE Chapters SET sequence_number = sequence_number + 1 WHERE book_id = ? AND sequence_number > ?", (book_id, target_seq))
+                new_seq = target_seq + 1
+                
+            conn.execute("UPDATE Chapters SET sequence_number = ? WHERE id = ?", (new_seq, chapter_id))
+            
+            # Normalize sequences to prevent gaps
+            rows = conn.execute("SELECT id FROM Chapters WHERE book_id = ? ORDER BY sequence_number ASC, id ASC", (book_id,)).fetchall()
+            for i, row in enumerate(rows):
+                conn.execute("UPDATE Chapters SET sequence_number = ? WHERE id = ?", (i + 1, row["id"]))
+
+    def reorder_block(self, block_id: int, target_id: int, position: str) -> None:
+        """Reorders a block above or below a target block."""
+        with self._get_connection() as conn:
+            target = conn.execute("SELECT chapter_id, sequence_number FROM Content_Blocks WHERE id = ?", (target_id,)).fetchone()
+            if not target: return
+            
+            target_chapter_id = target["chapter_id"]
+            target_seq = target["sequence_number"]
+            
+            if position == "above":
+                conn.execute("UPDATE Content_Blocks SET sequence_number = sequence_number + 1 WHERE chapter_id = ? AND sequence_number >= ?", (target_chapter_id, target_seq))
+                new_seq = target_seq
+            else:
+                conn.execute("UPDATE Content_Blocks SET sequence_number = sequence_number + 1 WHERE chapter_id = ? AND sequence_number > ?", (target_chapter_id, target_seq))
+                new_seq = target_seq + 1
+                
+            conn.execute("UPDATE Content_Blocks SET chapter_id = ?, sequence_number = ? WHERE id = ?", (target_chapter_id, new_seq, block_id))
+            
+            # Normalize target chapter sequences
+            rows = conn.execute("SELECT id FROM Content_Blocks WHERE chapter_id = ? AND is_active = 1 ORDER BY sequence_number ASC, id ASC", (target_chapter_id,)).fetchall()
+            for i, row in enumerate(rows):
+                conn.execute("UPDATE Content_Blocks SET sequence_number = ? WHERE id = ?", (i + 1, row["id"]))
+
+    def reorder_block_to_chapter(self, block_id: int, target_chapter_id: int) -> None:
+        """Moves a block to the end of a specific chapter."""
+        with self._get_connection() as conn:
+            next_seq = conn.execute("SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM Content_Blocks WHERE chapter_id = ?", (target_chapter_id,)).fetchone()[0]
+            conn.execute("UPDATE Content_Blocks SET chapter_id = ?, sequence_number = ? WHERE id = ?", (target_chapter_id, next_seq, block_id))
+
     def add_content_block(self, chapter_id: int, content_data: Dict[str, Any], content_type: str = 'text') -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -344,6 +396,16 @@ class DatabaseManager:
                 (block_id, marker, json.dumps(content))
             )
             return cursor.lastrowid
+
+    def sync_footnotes(self, block_id: int, footnotes: List[Dict[str, Any]]) -> None:
+        """Replaces all footnotes for a specific block with the new list."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM Footnotes WHERE block_id = ?", (block_id,))
+            for fn in footnotes:
+                conn.execute(
+                    "INSERT INTO Footnotes (block_id, marker, content) VALUES (?, ?, ?)",
+                    (block_id, fn.get("marker", "*"), json.dumps(fn.get("content", {})))
+                )
 
     def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
         """Fetch all chapters and content, optimized. LEFT JOIN ensures empty chapters (like Covers) are loaded too."""
