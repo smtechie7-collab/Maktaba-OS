@@ -76,6 +76,56 @@ class AudioProcessor:
             combined_audio.export(output_path, format="mp3", bitrate="192k")
             logger.info("Legacy audio processing complete.")
 
+    def process_timeline(self, tracks_config: List[Dict], output_path: str, crossfade_ms: int = 1000):
+        """
+        PILLAR 3: Real Audio Trimming & Merging.
+        Processes visual timeline tracks with specific start/end trim settings.
+        """
+        if not tracks_config:
+            logger.error("No input tracks provided.")
+            return
+
+        self._ensure_ffmpeg_available()
+        logger.info(f"Processing {len(tracks_config)} audio tracks from timeline...")
+        combined_audio = None
+
+        for track in tracks_config:
+            file_path = track.get("path")
+            start_sec = track.get("start", 0.0)
+            end_sec = track.get("end", None)
+
+            if not file_path or not os.path.exists(file_path):
+                logger.warning(f"File not found: {file_path}. Skipping.")
+                continue
+
+            current_audio = AudioSegment.from_file(file_path)
+
+            # Apply Trimming
+            start_ms = int(start_sec * 1000)
+            end_ms = int(end_sec * 1000) if end_sec else len(current_audio)
+            
+            # Sanity check bounds
+            start_ms = max(0, min(start_ms, len(current_audio)))
+            end_ms = max(start_ms, min(end_ms, len(current_audio)))
+
+            if start_ms > 0 or end_ms < len(current_audio):
+                logger.info(f"  -> Trimming '{track.get('name', 'track')}' from {start_ms}ms to {end_ms}ms")
+                current_audio = current_audio[start_ms:end_ms]
+
+            if combined_audio is None:
+                combined_audio = current_audio
+            else:
+                combined_audio = combined_audio.append(current_audio, crossfade=crossfade_ms)
+
+        if combined_audio:
+            logger.info(f"Normalizing final timeline mix to {self.target_lufs} LUFS...")
+            combined_audio = self.normalize_audio(combined_audio)
+            output_parent = os.path.dirname(output_path)
+            if output_parent:
+                os.makedirs(output_parent, exist_ok=True)
+            combined_audio.export(output_path, format="mp3", bitrate="192k")
+            logger.info("Timeline audio processing complete.")
+
     def build_from_recipe(self, recipe: Dict, source_dir: str, output_dir: str) -> None:
         """
         PILLAR 4: Node-Based Audio Routing.

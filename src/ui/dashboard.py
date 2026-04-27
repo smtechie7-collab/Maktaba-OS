@@ -30,6 +30,7 @@ from src.ui.components.audio_panel import AudioPanel
 from src.ui.components.properties_panel import PropertiesPanel
 from src.ui.components.web_bridge import WebBridge
 from src.ui.components.command_palette import CommandPalette
+from src.ui.search_dialog import SearchReplaceDialog
 from src.ui.workers import DbWorker
 from src.ui.styles.style_loader import load_stylesheet
 
@@ -333,6 +334,7 @@ class MaktabaDashboard(QMainWindow):
         
         self.audio_panel = AudioPanel()
         self.audio_panel.audio_time_clicked.connect(self.handle_audio_sync_click)
+        self.audio_panel.audio_time_updated.connect(self.handle_audio_playback_sync)
         
         self.audio_panel.hide() # Hide by default to maximize editing space
         self.studio_splitter.addWidget(self.editor_panel)
@@ -572,8 +574,12 @@ class MaktabaDashboard(QMainWindow):
         self.smart_paste_btn.setObjectName("secondaryBtn")
         self.smart_paste_btn.clicked.connect(self.show_bulk_import_dialog)
         
+        self.find_replace_btn = QPushButton("🔍 Find & Replace")
+        self.find_replace_btn.clicked.connect(self.show_find_replace_dialog)
+        
         layout.addWidget(self.quick_chapter_btn)
         layout.addWidget(self.smart_paste_btn)
+        layout.addWidget(self.find_replace_btn)
         layout.addWidget(self.quick_save_btn)
 
         self.activity_label = QLabel("Ready")
@@ -590,6 +596,7 @@ class MaktabaDashboard(QMainWindow):
             ("Ctrl+K", self.show_command_palette),
             ("Ctrl+P", self.handle_pdf_generation),
             ("Ctrl+I", self.show_bulk_import_dialog),
+            ("Ctrl+H", self.show_find_replace_dialog),
             ("Esc", self.editor_panel.clear_fields),
         ]
         for sequence, callback in shortcuts:
@@ -615,10 +622,14 @@ class MaktabaDashboard(QMainWindow):
             self.show_add_chapter_dialog()
         elif command == "save":
             self.editor_panel.on_save_clicked()
+        elif command == "restore_block":
+            self.restore_selected_block()
         elif command == "pdf":
             self.handle_pdf_generation()
         elif command == "import":
             self.show_bulk_import_dialog()
+        elif command == "replace":
+            self.show_find_replace_dialog()
         elif command == "search":
             self.book_search.setFocus()
         elif command == "library":
@@ -646,8 +657,10 @@ class MaktabaDashboard(QMainWindow):
         else:
             self.statusBar().showMessage(f"Audio Timeline Scrubbed to {time_sec:.2f}s. (Open Word-by-Word Sync tab to map)", 3000)
 
-    def execute_quick_command(self):
-        pass # Obsolete, removed usage
+    def handle_audio_playback_sync(self, time_sec):
+        """Continuously syncs the 3D book Live Preview Karaoke highlight with the playing audio."""
+        if WEB_ENGINE_AVAILABLE and hasattr(self, 'preview_browser') and isinstance(self.preview_browser, QWebEngineView):
+            self.preview_browser.page().runJavaScript(f"window.syncKaraoke({time_sec});")
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -753,67 +766,6 @@ class MaktabaDashboard(QMainWindow):
         if self.preview_pending:
             self.preview_pending = False
             self.preview_timer.start()
-
-    def update_live_preview_sync(self):
-        if not self.current_book_id: return
-        try:
-            from jinja2 import Environment, FileSystemLoader
-            env = Environment(loader=FileSystemLoader(str(self.config.template_dir)))
-            template = env.get_template("book_template.html")
-            
-            with self.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (self.current_book_id,))
-                book_info = cursor.fetchone()
-                
-            book_metadata = {}
-            if book_info and book_info['metadata']:
-                book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
-                
-            content_blocks = self.db.get_book_content(self.current_book_id)
-            chapters_data = []
-            current_chapter_id = None
-            current_chapter_dict = None
-            
-            for block in content_blocks:
-                if block['chapter_id'] != current_chapter_id:
-                    current_chapter_id = block['chapter_id']
-                    current_chapter_dict = {
-                        "chapter_title": block['chapter_title'], 
-                        "chapter_type": block.get('chapter_type', 'Content Chapter'),
-                        "blocks": []
-                    }
-                    chapters_data.append(current_chapter_dict)
-                
-                if block['block_id']:
-                    current_chapter_dict['blocks'].append({
-                        "block_id": block['block_id'],
-                        "content_data": json.loads(block['content_data']),
-                        "content_type": block['content_type'],
-                        "footnotes": block.get('footnotes', [])
-                    })
-                
-            draft_data = self.editor_panel.get_data()
-            has_draft = any([draft_data.get('ar'), draft_data.get('ur'), draft_data.get('guj'), draft_data.get('en')])
-            
-            if has_draft and chapters_data:
-                chapters_data[-1]['blocks'].append({
-                    "block_id": "draft",
-                    "content_data": draft_data,
-                    "content_type": "text",
-                    "footnotes": draft_data.get('footnotes', [])
-                })
-
-            styles = self.properties_panel.get_styles()
-            html_content = template.render(
-                book_title=book_info['title'] if book_info else "Preview",
-                author=book_info['author'] if book_info else "",
-                book_metadata=book_metadata,
-                chapters=chapters_data, margins=styles.get("margins"), fonts=styles.get("fonts")
-            )
-            self.preview_browser.setHtml(html_content)
-        except Exception as e:
-            print(f"Live Preview Error: {e}")
 
     def load_books(self):
         self.book_list.setEnabled(False)
@@ -1171,6 +1123,26 @@ class MaktabaDashboard(QMainWindow):
         self.refresh_structure()
         self.update_live_preview()
 
+    def restore_selected_block(self):
+        if not self.selected_block_id:
+            return QMessageBox.warning(self, "Error", "Select a block from the Project Explorer first.")
+            
+        reply = QMessageBox.question(
+            self, "Restore Block", 
+            "Are you sure you want to undo and restore the previous version of this block?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes: 
+            return
+            
+        if self.db.restore_previous_block_version(self.selected_block_id):
+            self.statusBar().showMessage(f"Block #{self.selected_block_id} restored to previous version.", 3000)
+            self.load_block_for_editing(self.selected_block_id)
+            self.refresh_structure()
+            self.update_live_preview()
+        else:
+            QMessageBox.information(self, "No History", "No previous versions found for this block.")
+
     def update_context_summary(self):
         if not hasattr(self, "context_label"):
             return
@@ -1214,6 +1186,8 @@ class MaktabaDashboard(QMainWindow):
             self.quick_save_btn.setEnabled(has_book and has_chapter)
         if hasattr(self, "smart_paste_btn"):
             self.smart_paste_btn.setEnabled(has_book and has_chapter)
+        if hasattr(self, "find_replace_btn"):
+            self.find_replace_btn.setEnabled(has_book)
         self.update_context_summary()
         
         # UX Fix: Disable the editor completely if no chapter is selected to prevent confusion

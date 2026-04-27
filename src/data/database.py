@@ -388,6 +388,79 @@ class DatabaseManager:
                 (block["sequence_number"], target["id"]),
             )
 
+    def restore_previous_block_version(self, block_id: int) -> bool:
+        """Restores a block to its most recent historical state from the audit table."""
+        with self._get_connection() as conn:
+            history = conn.execute(
+                "SELECT history_id, content_data, is_active FROM Content_Blocks_History WHERE block_id = ? ORDER BY version_id DESC LIMIT 1",
+                (block_id,)
+            ).fetchone()
+            
+            if not history:
+                return False
+                
+            # Update the main block. The SQLite trigger will automatically archive the *current* state.
+            conn.execute(
+                "UPDATE Content_Blocks SET content_data = ?, is_active = ? WHERE id = ?",
+                (history["content_data"], history["is_active"], block_id)
+            )
+            # Remove the history record we just consumed
+            conn.execute("DELETE FROM Content_Blocks_History WHERE history_id = ?", (history["history_id"],))
+            return True
+
+    def global_replace(self, search_term: str, replace_term: str, lang_key: str = None, book_id: Optional[int] = None) -> int:
+        """
+        Safely finds and replaces text inside JSON content blocks without breaking structure.
+        Uses update_content_block to ensure versions are properly bumped and tracked.
+        """
+        updated_count = 0
+        with self._get_connection() as conn:
+            query = """
+                SELECT cb.id, cb.content_data 
+                FROM Content_Blocks cb
+                JOIN Chapters c ON cb.chapter_id = c.id
+                WHERE cb.is_active = 1 AND cb.content_data LIKE ?
+            """
+            params = [f"%{search_term}%"]
+            if book_id is not None:
+                query += " AND c.book_id = ?"
+                params.append(book_id)
+            
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+        for row in rows:
+            block_id = row["id"]
+            try:
+                data = json.loads(row["content_data"])
+                modified = False
+                
+                def replace_in_dict(d):
+                    nonlocal modified
+                    for k, v in d.items():
+                        if lang_key and k != lang_key and not isinstance(v, (dict, list)):
+                            continue 
+                        
+                        if isinstance(v, str) and search_term in v:
+                            d[k] = v.replace(search_term, replace_term)
+                            modified = True
+                        elif isinstance(v, dict):
+                            replace_in_dict(v)
+                        elif isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, dict):
+                                    replace_in_dict(item)
+
+                replace_in_dict(data)
+                
+                if modified:
+                    self.update_content_block(block_id, data)
+                    updated_count += 1
+            except json.JSONDecodeError:
+                continue
+
+        return updated_count
+
     def add_footnote(self, block_id: int, content: Dict[str, Any], marker: str = None) -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()

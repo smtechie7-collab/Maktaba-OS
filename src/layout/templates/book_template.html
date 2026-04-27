@@ -42,9 +42,10 @@
                 }
                 
                 @footnote {
-                    border-top: 1pt solid #000;
+                    border-top: 1px solid #94A3B8;
                     margin-top: 15px;
                     padding-top: 5px;
+                    direction: rtl; /* Enforce RTL alignment for Islamic Footnotes */
                 }
                 
                 @bottom-center { 
@@ -59,23 +60,48 @@
             .cover-page { page-break-before: always; }
             .chapter-title { page-break-before: always; }
             
-            /* Override Turn.js logic for Print */
+            /* Override Turn.js logic for Print  */
             #flipbook, #flipbook .page, #flipbook .hard {
                 display: block !important; width: auto !important; height: auto !important;
                 position: static !important; overflow: visible !important; transform: none !important;
             }
             .page-content { overflow: visible !important; height: auto !important; }
             
-            /* WEASYPRINT FOOTNOTE ENGINE */
+            /* WEASYPRINT FOOTNOTE ENGINE (PANGO STRICT) */
             .weasy-footnote {
                 float: footnote;
-                font-size: 10pt;
-                color: #333;
-                text-align: justify;
-                line-height: 1.4;
-                margin-bottom: 4px;
+                font-size: 10.5pt;
+                color: #1A202C;
+                text-align: right;
+                direction: rtl;
+                line-height: 1.5;
+                margin-bottom: 5px;
+                font-family: '{{ fonts.arabic }}', serif;
+                /* Establish block formatting context to contain left-floated English text */
+                overflow: hidden; 
             }
-            .footnote-marker { font-size: 0.8em; vertical-align: super; color: #185FA5; font-weight: bold; margin-right: 2px;}
+            /* WeasyPrint Native Footnote Auto-Numbering */
+            .weasy-footnote::footnote-call {
+                content: counter(footnote);
+                font-size: 0.85em;
+                vertical-align: super;
+                color: #D32F2F;
+                font-weight: bold;
+            }
+            .weasy-footnote::footnote-marker {
+                content: counter(footnote) " - ";
+                color: #D32F2F;
+                font-weight: bold;
+                margin-left: 5px;
+            }
+            .weasy-footnote .footnote-marker { display: none; } /* Hide manual fallback marker in print */
+            .weasy-footnote .fn-en { float: left; direction: ltr; font-family: sans-serif; font-size: 9pt; color: #475569; margin-top: 2px; }
+            
+            /* WEASYPRINT TABLE OF CONTENTS */
+            .toc-list { list-style: none; padding: 0; margin: 0 20mm; direction: ltr; }
+            .toc-list li { margin-bottom: 12px; font-size: 14pt; }
+            .toc-list a { text-decoration: none; color: #0F172A; font-family: sans-serif; }
+            .toc-list a::after { content: leader('.') " " target-counter(attr(href), page); }
         }
 
         /* =========================================================
@@ -116,7 +142,7 @@
             
             /* Content Area with Custom Scrollbar for long chapters */
             .page-content {
-                padding: 40px 50px; height: 100%; overflow-y: auto; overflow-x: hidden;
+                padding: {{ margins.top }}mm {{ margins.right }}mm {{ margins.bottom }}mm {{ margins.left }}mm; height: 100%; overflow-y: auto; overflow-x: hidden;
                 box-sizing: border-box;
             }
             
@@ -143,6 +169,25 @@
                 font-size: 11px; padding: 4px 8px; border-radius: 4px; font-weight: bold;
                 opacity: 0; pointer-events: none; transition: opacity 0.3s;
             }
+            
+            /* Karaoke Audio-Sync Active State */
+            .karaoke-active {
+                background-color: #FEF3C7; /* Soft gold highlight */
+                border-radius: 6px;
+                transform: scale(1.15);
+                transition: all 0.15s ease-in-out;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                border-bottom-color: transparent !important;
+                z-index: 10; position: relative;
+            }
+            .karaoke-active .word-ar { color: #D97706; }
+            
+            /* SCREEN TABLE OF CONTENTS */
+            .toc-list { list-style: none; padding: 0; margin: 0 10%; direction: ltr; }
+            .toc-list li { margin-bottom: 15px; font-size: 14pt; }
+            .toc-list a { text-decoration: none; color: #0F172A; font-family: sans-serif; display: flex; justify-content: space-between; border-bottom: 1px dotted #CBD5E1; padding-bottom: 5px; }
+            .toc-list a::after { content: " \2192"; color: #94A3B8; font-size: 12pt; }
+            .toc-list a:hover { color: #176B87; font-weight: bold; border-bottom-color: #176B87; }
         }
 
         /* =========================================================
@@ -155,6 +200,13 @@
         .cover-page h1 { font-size: 38pt; color: #185FA5; margin-top: 10%; margin-bottom: 20px;}
         .cover-page h2 { font-size: 24pt; color: #333; font-family: '{{ fonts.arabic }}'; margin-top:30px;}
         .cover-page h3 { font-size: 16pt; color: #555; margin-top: 10px; font-style: italic;}
+
+        /* --- TABLE OF CONTENTS (Shared Core) --- */
+        .toc-title {
+            text-align: center; font-size: 28pt; margin-bottom: 40px; 
+            font-family: '{{ fonts.arabic }}', serif; color: #176B87;
+        }
+        .toc-page { page-break-after: always; }
 
         /* --- QR CODE AUDIO BOX (Low IQ Audience UX) --- */
         .qr-box {
@@ -209,7 +261,7 @@
 
         .row-ar {
             font-family: '{{ fonts.arabic }}', serif; font-size: {{ fonts.arabic_size }}pt;
-            direction: rtl; text-align: right; line-height: 2.2;
+            direction: rtl; text-align: {{ fonts.arabic_align | default('right') }}; line-height: 2.2;
             color: #000; border-right: 3px solid #EF9F27; padding-right: 15px; margin-bottom: 10px;
         }
         .row-ar .footnote-callout { font-size: 14pt; color: #D32F2F; vertical-align: super; }
@@ -217,21 +269,23 @@
         /* STUDIO SCREEN FOOTNOTES (Inline Fallback) */
         @media screen {
             .weasy-footnote {
-                display: block; font-size: 11pt; color: #666; background: #F8FAFC; 
-                border-left: 3px solid #CBD5E1; padding: 8px 12px; margin-top: 10px; border-radius: 4px;
+                display: block; font-size: 12pt; color: #475569; background: #F8FAFC; 
+                border-right: 3px solid #CBD5E1; padding: 8px 12px; margin-top: 10px; border-radius: 4px;
+                text-align: right; direction: rtl; font-family: '{{ fonts.arabic }}', serif;
             }
+            .weasy-footnote .footnote-marker { color: #D32F2F; font-weight: bold; margin-left: 5px; vertical-align: super; font-size: 0.85em; }
         }
         .row-ur {
             font-family: '{{ fonts.urdu }}', serif; font-size: {{ fonts.urdu_size }}pt;
-            direction: rtl; text-align: right; line-height: 1.8;
+            direction: rtl; text-align: {{ fonts.urdu_align | default('right') }}; line-height: 1.8;
             color: #333; border-right: 3px solid #1D9E75; padding-right: 15px; margin-bottom: 8px;
         }
         .row-gu {
             font-family: '{{ fonts.gujarati }}', sans-serif; font-size: {{ fonts.gujarati_size }}pt;
-            direction: ltr; text-align: left; line-height: 1.4; color: #444; font-style: italic; border-left: 3px solid #7F77DD; padding-left: 15px; margin-bottom: 6px;
+            direction: ltr; text-align: {{ fonts.gujarati_align | default('left') }}; line-height: 1.4; color: #444; font-style: italic; border-left: 3px solid #7F77DD; padding-left: 15px; margin-bottom: 6px;
         }
         .row-hn {
-            font-family: sans-serif; font-size: 11pt; direction: ltr; text-align: left; line-height: 1.4; color: #666; border-left: 3px solid #1D9E75; padding-left: 15px;
+            font-family: sans-serif; font-size: 11pt; direction: ltr; text-align: {{ fonts.gujarati_align | default('left') }}; line-height: 1.4; color: #666; border-left: 3px solid #1D9E75; padding-left: 15px;
         }
 
         /* --- GLOBAL BOOK HEADER --- */
@@ -280,20 +334,47 @@
     <div id="flipbook-wrapper">
         <div id="flipbook">
         
-        <!-- Main Book Header (Cover, Title, Author) -->
-        <div class="global-book-header">
-            {% if book_metadata and book_metadata.cover_image %}
-                <!-- Replace backslashes for safe local file URL rendering -->
-                <img src="file:///{{ book_metadata.cover_image | replace('\\', '/') }}" alt="Book Cover" class="book-cover-img" />
-            {% endif %}
-            <h1 class="main-book-title">{{ book_title }}</h1>
-            {% if author %}
-                <h3 class="main-book-author">By: {{ author }}</h3>
-            {% endif %}
+        <!-- HARDCOVER FRONT -->
+        <div class="hard cover-front">
+            <div class="page-content" style="overflow-y: hidden;">
+                <!-- Main Book Header (Cover, Title, Author) -->
+                <div class="global-book-header">
+                    {% if book_metadata and book_metadata.cover_image %}
+                        <!-- Replace backslashes for safe local file URL rendering -->
+                        <img src="file:///{{ book_metadata.cover_image | replace('\\', '/') }}" alt="Book Cover" class="book-cover-img" />
+                    {% endif %}
+                    <h1 class="main-book-title">{{ book_title }}</h1>
+                    {% if author %}
+                        <h3 class="main-book-author">By: {{ author }}</h3>
+                    {% endif %}
+                </div>
+            </div>
         </div>
+
+    <!-- AUTOMATED TABLE OF CONTENTS -->
+    {% if chapters and chapters|length > 0 %}
+        <div class="page soft-page toc-page">
+            <div class="page-content">
+                <h1 class="toc-title">Table of Contents</h1>
+                <ul class="toc-list">
+                    {% for chapter in chapters %}
+                        {% if chapter.chapter_type != 'Cover Page' %}
+                        <li>
+                            <a href="#chap-{{ chapter.chapter_id }}"><bdi dir="auto">{{ chapter.chapter_title }}</bdi></a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endif %}
 
     {% for chapter in chapters %}
         
+        <!-- SOFT PAGE (ONE PER CHAPTER) -->
+        <div class="page soft-page">
+            <div class="page-content">
+
         <!-- COVER PAGE LOGIC -->
         {% if chapter.chapter_type == 'Cover Page' %}
             <div class="cover-page">
@@ -318,7 +399,7 @@
         
         <!-- NORMAL CHAPTER LOGIC -->
         {% else %}
-            <div class="chapter-title">{{ chapter.chapter_title }}</div>
+            <div class="chapter-title" id="chap-{{ chapter.chapter_id }}">{{ chapter.chapter_title }}</div>
             
             <!-- Print Auto QR Code at the start of daily chapters -->
             {% if chapter.qr_code_base64 %}
@@ -336,7 +417,7 @@
                         <!-- WORD-BY-WORD RENDERING -->
                         <div class="word-by-word-container">
                             {% for word in block.content_data.words %}
-                                <div class="word-box">
+                                <div class="word-box" data-start="{{ word.start }}" data-end="{{ word.end }}">
                                     {% if word.ar %}<div class="word-ar">{{ word.ar | safe }}</div>{% endif %}
                                     {% if word.guj %}<div class="word-translit">{{ word.guj | safe }}</div>
                                     {% elif word.en %}<div class="word-translit">{{ word.en | safe }}</div>{% endif %}
@@ -356,8 +437,8 @@
                         {% for fn in block.footnotes %}
                         <div class="weasy-footnote">
                             <span class="footnote-marker">{{ fn.marker }}</span>
-                            {% if fn.content.ar %}<span dir="rtl" style="font-family: '{{ fonts.arabic }}', serif;">{{ fn.content.ar }}</span>{% endif %}
-                            {% if fn.content.en %}<span dir="ltr">| {{ fn.content.en }}</span>{% endif %}
+                            {% if fn.content.ar %}<bdi dir="rtl">{{ fn.content.ar }}</bdi>{% endif %}
+                            {% if fn.content.en %}<bdi class="fn-en" dir="ltr">{{ fn.content.en }}</bdi>{% endif %}
                         </div>
                         {% endfor %}
                     {% endif %}
@@ -366,7 +447,19 @@
             {% endfor %}
         {% endif %}
 
+            </div>
+        </div>
     {% endfor %}
+        
+        <!-- HARDCOVER BACK -->
+        <div class="hard cover-back">
+            <div class="page-content" style="overflow-y: hidden;">
+                <div style="display:flex; height:100%; align-items:center; justify-content:center;">
+                    <h2 style="color:#475569; font-family: sans-serif;">End of Book</h2>
+                </div>
+            </div>
+        </div>
+
         </div>
     </div>
 
@@ -391,6 +484,31 @@
                 }
             }
         }
+        
+        // Karaoke Word-Level Audio Sync API
+        window.syncKaraoke = function(currentTime) {
+            const wordBoxes = document.querySelectorAll('.word-box[data-start]');
+            wordBoxes.forEach(box => {
+                const startStr = box.getAttribute('data-start');
+                const endStr = box.getAttribute('data-end');
+                
+                if (startStr && startStr.trim() !== '') {
+                    const start = parseFloat(startStr);
+                    // If no end time is mapped, assume a brief 0.8s duration for the highlight
+                    const end = (endStr && endStr.trim() !== '') ? parseFloat(endStr) : start + 0.8;
+                    
+                    if (currentTime >= start && currentTime <= end) {
+                        if (!box.classList.contains('karaoke-active')) {
+                            box.classList.add('karaoke-active');
+                            // Auto-scroll the active word into the center of the soft-page container
+                            box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    } else {
+                        box.classList.remove('karaoke-active');
+                    }
+                }
+            });
+        };
         
         // Initialize Turn.js 3D Flipbook (Only runs on Screen, ignored by WeasyPrint)
         $(window).on('load', function() {

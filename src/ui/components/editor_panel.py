@@ -407,7 +407,6 @@ class EditorPanel(QWidget):
             
             v_layout.addWidget(editor)
             v_layout.addWidget(counter_lbl, alignment=Qt.AlignmentFlag.AlignRight)
-            self.grid_layout.addWidget(container)
             self.editor_splitter.addWidget(container)
             
             self.editors[field["id"]] = editor
@@ -416,17 +415,6 @@ class EditorPanel(QWidget):
 
     def on_editor_focus_in(self, active_field_id):
         """Dynamic Flex Grid: Maximizes the active editor and minimizes the rest."""
-        for i in range(self.grid_layout.count()):
-            item = self.grid_layout.itemAt(i)
-            if item and item.widget():
-                container = item.widget()
-                if container.property("field_id") == active_field_id:
-                    self.grid_layout.setStretch(i, 5) # Expand active (5x wider)
-                    container.setProperty("active_state", "focused")
-                else:
-                    self.grid_layout.setStretch(i, 1) # Shrink inactive
-                    container.setProperty("active_state", "dimmed")
-                self.update_widget_style(container)
         sizes = []
         for i in range(self.editor_splitter.count()):
             container = self.editor_splitter.widget(i)
@@ -441,13 +429,6 @@ class EditorPanel(QWidget):
 
     def reset_stretches(self):
         """Resets all editors to equal widths."""
-        for i in range(self.grid_layout.count()):
-            item = self.grid_layout.itemAt(i)
-            if item and item.widget():
-                container = item.widget()
-                self.grid_layout.setStretch(i, 1) # Reset to 1:1:1:1
-                container.setProperty("active_state", "normal")
-                self.update_widget_style(container)
         sizes = []
         for i in range(self.editor_splitter.count()):
             container = self.editor_splitter.widget(i)

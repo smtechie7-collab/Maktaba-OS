@@ -114,3 +114,53 @@ def test_block_duplicate_soft_delete_and_move(test_db):
 
     content = [row for row in test_db.get_book_content(book_id) if row["block_id"]]
     assert [row["block_id"] for row in content] == [first, duplicate]
+
+def test_block_versioning_and_audit_trigger(test_db):
+    """Verify that editing a block automatically bumps version_id and archives the old state."""
+    book_id = test_db.add_book("Versioning Test")
+    chap_id = test_db.add_chapter(book_id, "Chap 1", 1)
+    
+    # Insert initial block
+    block_data = {"en": "Version 1"}
+    block_id = test_db.add_content_block(chap_id, block_data)
+    
+    # Update the block
+    test_db.update_content_block(block_id, {"en": "Version 2"})
+    
+    with test_db._get_connection() as conn:
+        # Check that the main table bumped the version
+        current = conn.execute("SELECT content_data, version_id FROM Content_Blocks WHERE id = ?", (block_id,)).fetchone()
+        assert json.loads(current["content_data"])["en"] == "Version 2"
+        assert current["version_id"] == 2
+        
+        # Check that the history table captured Version 1
+        history = conn.execute("SELECT content_data, version_id FROM Content_Blocks_History WHERE block_id = ?", (block_id,)).fetchall()
+        assert len(history) == 1
+        assert json.loads(history[0]["content_data"])["en"] == "Version 1"
+        assert history[0]["version_id"] == 1
+
+def test_global_find_and_replace(test_db):
+    """Test global find and replace across JSON content blocks safely."""
+    book_id = test_db.add_book("Search Book")
+    chap_id = test_db.add_chapter(book_id, "Search Chapter", 1)
+    
+    # Insert blocks with specific text
+    block1 = test_db.add_content_block(chap_id, {"ar": "مرحبا بك في مكاتب", "en": "Welcome to Maktaba"})
+    block2 = test_db.add_content_block(chap_id, {"ar": "مكاتب هي المستقبل", "en": "Maktaba is the future"})
+    
+    # Call the new global_replace method
+    updated_count = test_db.global_replace("Maktaba", "Maktaba-OS", lang_key="en")
+    
+    assert updated_count == 2
+    
+    # Verify replacement
+    content = test_db.get_book_content(book_id)
+    for row in content:
+        data = json.loads(row["content_data"])
+        assert "Maktaba-OS" in data["en"]
+        assert "Maktaba" not in data["en"]
+        
+    # Verify versioning was preserved via update_content_block audit logic
+    with test_db._get_connection() as conn:
+        history = conn.execute("SELECT * FROM Content_Blocks_History WHERE block_id = ?", (block1,)).fetchall()
+        assert len(history) == 1

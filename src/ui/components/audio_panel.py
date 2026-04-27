@@ -3,7 +3,8 @@ import sys
 import json
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QListWidget, QFileDialog, QMessageBox, 
-                             QGroupBox, QSpinBox, QSplitter, QAbstractItemView, QInputDialog)
+                             QGroupBox, QSpinBox, QSplitter, QAbstractItemView, QInputDialog,
+                             QDoubleSpinBox, QFormLayout, QDialog)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QObject, pyqtSlot
 from PyQt6.QtGui import QIcon
 
@@ -25,13 +26,17 @@ class AudioWebBridge(QObject):
     def on_time_clicked(self, current_time):
         self.time_clicked.emit(current_time)
 
+    time_updated = pyqtSignal(float)
+    @pyqtSlot(float)
+    def on_time_updated(self, current_time):
+        self.time_updated.emit(current_time)
+
 class VisualAudioWorker(QThread):
     """Background worker for stitching the visual timeline"""
     finished = pyqtSignal(bool, str)
-    
-    def __init__(self, file_paths, output_path, crossfade_ms, target_lufs):
+    def __init__(self, tracks_config, output_path, crossfade_ms, target_lufs):
         super().__init__()
-        self.file_paths = file_paths
+        self.tracks_config = tracks_config
         self.output_path = output_path
         self.crossfade_ms = crossfade_ms
         self.target_lufs = target_lufs
@@ -39,14 +44,14 @@ class VisualAudioWorker(QThread):
     def run(self):
         try:
             processor = AudioProcessor(target_lufs=self.target_lufs)
-            # Using the legacy sequential process for the visual timeline
-            processor.process_chapters(self.file_paths, self.output_path, self.crossfade_ms)
+            processor.process_timeline(self.tracks_config, self.output_path, self.crossfade_ms)
             self.finished.emit(True, self.output_path)
         except Exception as e:
             self.finished.emit(False, str(e))
 
 class AudioPanel(QWidget):
     audio_time_clicked = pyqtSignal(float)
+    audio_time_updated = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,6 +75,7 @@ class AudioPanel(QWidget):
         
         self.audio_bridge = AudioWebBridge()
         self.audio_bridge.time_clicked.connect(self.audio_time_clicked.emit)
+        self.audio_bridge.time_updated.connect(self.audio_time_updated.emit)
         self.web_channel = QWebChannel()
         self.web_channel.registerObject("audioBridge", self.audio_bridge)
         self.waveform_view.page().setWebChannel(self.web_channel)
@@ -89,6 +95,7 @@ class AudioPanel(QWidget):
                 const wavesurfer = WaveSurfer.create({ container: '#waveform', waveColor: '#475569', progressColor: '#3B82F6', barWidth: 2, height: 80 });
                 new QWebChannel(qt.webChannelTransport, function(channel) { window.audioBridge = channel.objects.audioBridge; });
                 wavesurfer.on('interaction', () => { if (window.audioBridge) window.audioBridge.on_time_clicked(wavesurfer.getCurrentTime()); document.getElementById('status-text').innerText = "Timeline Sync: " + wavesurfer.getCurrentTime().toFixed(2) + "s"; });
+                wavesurfer.on('timeupdate', (currentTime) => { if (window.audioBridge) window.audioBridge.on_time_updated(currentTime); document.getElementById('status-text').innerText = "Playing: " + currentTime.toFixed(2) + "s"; });
             </script>
         </body>
         </html>
@@ -181,6 +188,7 @@ class AudioPanel(QWidget):
         self.timeline_list.setViewportMargins(10, 10, 10, 10)
         self.timeline_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.timeline_list.setObjectName("timelineList")
+        self.timeline_list.itemDoubleClicked.connect(self.edit_track_trim)
         tl_layout.addWidget(self.timeline_list)
         splitter.addWidget(tl_widget)
 
@@ -210,8 +218,61 @@ class AudioPanel(QWidget):
                 if not exists:
                     from PyQt6.QtWidgets import QListWidgetItem
                     item = QListWidgetItem(f"🎵 {filename}")
-                    item.setData(Qt.ItemDataRole.UserRole, f) # Store full path invisibly
+                    item.setData(Qt.ItemDataRole.UserRole, {"path": f, "start": 0.0, "end": None, "name": filename}) 
                     self.library_list.addItem(item)
+
+    def edit_track_trim(self, item):
+        """Opens a dialog to trim start/end times of a specific audio track in the timeline."""
+        track_data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(track_data, str):
+            track_data = {"path": track_data, "start": 0.0, "end": None, "name": os.path.basename(track_data)}
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Trim: {track_data['name']}")
+        dialog.setMinimumWidth(300)
+        layout = QFormLayout(dialog)
+        
+        start_spn = QDoubleSpinBox()
+        start_spn.setRange(0, 36000)
+        start_spn.setDecimals(2)
+        start_spn.setValue(track_data.get("start", 0.0))
+        start_spn.setSuffix(" s")
+        
+        end_spn = QDoubleSpinBox()
+        end_spn.setRange(0, 36000)
+        end_spn.setDecimals(2)
+        end_val = track_data.get("end")
+        if end_val is None:
+            end_spn.setValue(0.0)
+            end_spn.setSpecialValueText("End of File")
+        else:
+            end_spn.setValue(end_val)
+        end_spn.setSuffix(" s")
+        
+        layout.addRow("Start Time:", start_spn)
+        layout.addRow("End Time:", end_spn)
+        
+        btns = QHBoxLayout()
+        save_btn = QPushButton("Save Trim")
+        save_btn.setObjectName("primaryBtn")
+        save_btn.clicked.connect(dialog.accept)
+        btns.addWidget(save_btn)
+        layout.addRow(btns)
+        
+        if dialog.exec():
+            new_data = {
+                "path": track_data["path"],
+                "name": track_data["name"],
+                "start": start_spn.value(),
+                "end": end_spn.value() if end_spn.value() > 0 else None
+            }
+            item.setData(Qt.ItemDataRole.UserRole, new_data)
+            
+            end_str = f"{new_data['end']}s" if new_data['end'] else "End"
+            if new_data['start'] > 0 or new_data['end']:
+                item.setText(f"🎵 {new_data['name']}\n[{new_data['start']}s - {end_str}]")
+            else:
+                item.setText(f"🎵 {new_data['name']}")
                     
             # Auto-preview the first loaded file in the waveform if available
             if WEB_ENGINE_AVAILABLE and files:
@@ -220,30 +281,39 @@ class AudioPanel(QWidget):
     def clear_timeline(self):
         self.timeline_list.clear()
 
-    def get_timeline_paths(self):
-        """Extracts the full file paths from the visual blocks in the timeline in order."""
-        paths = []
+    def get_timeline_tracks(self):
+        """Extracts the configuration (path, trim data) from the visual timeline."""
+        tracks = []
         for i in range(self.timeline_list.count()):
             item = self.timeline_list.item(i)
-            paths.append(item.data(Qt.ItemDataRole.UserRole))
-        return paths
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, str):
+                data = {"path": data, "start": 0.0, "end": None, "name": os.path.basename(data)}
+            tracks.append(data)
+        return tracks
 
     def export_json_recipe(self):
         """Converts the visual timeline into a recipe.json file for automated routing."""
-        paths = self.get_timeline_paths()
-        if not paths:
+        tracks = self.get_timeline_tracks()
+        if not tracks:
             return QMessageBox.warning(self, "Empty", "Timeline is empty! Drag tracks first.")
-        
         name, ok = QInputDialog.getText(self, "Recipe Name", "Enter a name for this playlist (e.g. Monday_Full):")
         if not ok or not name: return
 
-        # Extract just the filenames for the recipe
-        track_names = [os.path.basename(p) for p in paths]
+        # Clean tracks for JSON serialization
+        clean_tracks = []
+        for t in tracks:
+            clean_tracks.append({
+                "file": t["name"],
+                "start_sec": t["start"],
+                "end_sec": t["end"]
+            })
         
         recipe_data = {
             name: {
-                "tracks": track_names,
-                "crossfade": self.crossfade_spn.value()
+                "tracks": clean_tracks,
+                "crossfade": self.crossfade_spn.value(),
+                "target_lufs": self.lufs_spn.value()
             }
         }
 
@@ -254,10 +324,10 @@ class AudioPanel(QWidget):
             QMessageBox.information(self, "Saved", f"Recipe saved!\nTo use this, place it in assets/ along with the raw audio files.")
 
     def build_timeline_audio(self):
-        paths = self.get_timeline_paths()
-        if not paths:
+        tracks = self.get_timeline_tracks()
+        if not tracks:
             return QMessageBox.warning(self, "Empty", "Timeline is empty! Drag tracks from Library to the Timeline.")
-
+            
         out_path, _ = QFileDialog.getSaveFileName(self, "Save Final Mix", "Final_Mix.mp3", "MP3 Files (*.mp3)")
         if not out_path:
             return
@@ -267,7 +337,7 @@ class AudioPanel(QWidget):
         self.update_btn_style(self.build_btn, "buildBtnProcessing")
 
         self.worker = VisualAudioWorker(
-            file_paths=paths, 
+            tracks_config=tracks, 
             output_path=out_path, 
             crossfade_ms=self.crossfade_spn.value(), 
             target_lufs=self.lufs_spn.value()
