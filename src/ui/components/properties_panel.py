@@ -45,6 +45,10 @@ class PropertiesPanel(QWidget):
         ar_layout.addRow("", self.ar_size_lbl)
         ar_layout.addRow("Alignment:", self.ar_align)
         ar_group.setLayout(ar_layout)
+        
+        self.tajweed_checkbox = QCheckBox("🟢 Render Tajweed Colors (PDF & Preview)")
+        self.tajweed_checkbox.setChecked(True)
+        ar_layout.addRow(self.tajweed_checkbox)
         typo_layout.addWidget(ar_group)
 
         ur_group = QGroupBox("Urdu Font")
@@ -163,6 +167,7 @@ class PropertiesPanel(QWidget):
             slider.valueChanged.connect(lambda _: self.properties_changed.emit())
             
         self.holy_checkbox.stateChanged.connect(lambda _: self.properties_changed.emit())
+        self.tajweed_checkbox.stateChanged.connect(lambda _: self.properties_changed.emit())
 
     def get_styles(self):
         return {
@@ -175,7 +180,8 @@ class PropertiesPanel(QWidget):
                 "arabic": self.ar_font.currentText(), "arabic_size": self.ar_size.value(), "arabic_align": self.ar_align.currentText().lower(),
                 "urdu": self.ur_font.currentText(), "urdu_size": self.ur_size.value(), "urdu_align": self.ur_align.currentText().lower(),
                 "gujarati": self.guj_font.currentText(), "gujarati_size": self.guj_size.value(), "gujarati_align": self.guj_align.currentText().lower()
-            }
+            },
+            "enable_tajweed": self.tajweed_checkbox.isChecked()
         }
 
     def save_theme(self):

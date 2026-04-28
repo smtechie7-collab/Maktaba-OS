@@ -55,7 +55,12 @@ class AudioPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.current_audio_time = 0.0
         self.init_ui()
+        self.audio_time_updated.connect(self._track_time)
+
+    def _track_time(self, time_sec):
+        self.current_audio_time = time_sec
 
     def update_btn_style(self, btn, obj_name):
         btn.setObjectName(obj_name)

@@ -1,7 +1,7 @@
 import re
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QLineEdit, QFormLayout, QComboBox, 
-                             QTextEdit, QSpinBox, QGroupBox, QFileDialog)
+                             QTextEdit, QSpinBox, QGroupBox, QFileDialog, QCheckBox)
 from PyQt6.QtCore import Qt
 from src.ui.styles.style_loader import load_stylesheet
 
@@ -143,14 +143,24 @@ class ChapterDialog(QDialog):
         }
 
 class BulkImportDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, plugins=None):
         super().__init__(parent)
         self.setWindowTitle("Smart Paste & Auto-Split Document")
         self.setMinimumWidth(1000)
         self.setMinimumHeight(700)
         self.setStyleSheet(DIALOG_STYLE)
         self.layout = QVBoxLayout(self)
-        self.layout.addWidget(QLabel("<b>Distraction-Free Smart Parser:</b> Paste your entire document below. It will auto-detect languages and split them into blocks."))
+        self.layout.addWidget(QLabel("<b>Distraction-Free Smart Parser:</b> Paste your document below or select a file for custom plugins."))
+        
+        file_layout = QHBoxLayout()
+        self.file_input = QLineEdit()
+        self.file_input.setPlaceholderText("Optional: Select a document file (.docx, .xml) for custom plugin parsing...")
+        self.file_btn = QPushButton("Browse File")
+        self.file_btn.clicked.connect(self.browse_file)
+        file_layout.addWidget(self.file_input)
+        file_layout.addWidget(self.file_btn)
+        self.layout.addLayout(file_layout)
+
         self.raw_text = QTextEdit()
         self.raw_text.setPlaceholderText("Paste your entire raw document here...\n\nLeave an empty line between paragraphs. Maktaba will automatically split them into distinct blocks and map the languages (Arabic, Urdu, English, Gujarati).")
         self.raw_text.setStyleSheet("font-size: 16px; padding: 15px; line-height: 1.6;")
@@ -159,6 +169,13 @@ class BulkImportDialog(QDialog):
         config_group = QGroupBox("Advanced Block Metadata (Optional)")
         config_layout = QFormLayout()
         self.separator_input = QLineEdit("\\n\\n")
+        
+        self.format_combo = QComboBox()
+        self.format_combo.addItem("Default (Smart Parse)", None)
+        if plugins:
+            for name, mod in plugins.items():
+                self.format_combo.addItem(f"Plugin: {name.replace('_', ' ').title()}", mod)
+                
         self.day_combo = QComboBox()
         self.day_combo.addItems(["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
         self.track_combo = QComboBox()
@@ -166,6 +183,7 @@ class BulkImportDialog(QDialog):
         self.section_combo = QComboBox()
         self.section_combo.addItems(["General", "Muqaddama", "Asma-ul-Husna", "Dua-e-Iftitah", "Hizb", "Shajra"])
         
+        config_layout.addRow("Import Format:", self.format_combo)
         config_layout.addRow("Block Separator:", self.separator_input)
         config_layout.addRow("Assign Day:", self.day_combo)
         config_layout.addRow("Assign Track:", self.track_combo)
@@ -183,13 +201,127 @@ class BulkImportDialog(QDialog):
         self.buttons.addWidget(self.cancel_btn)
         self.layout.addLayout(self.buttons)
 
+    def browse_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Document", "", "Word Documents (*.docx);;All Files (*.*)")
+        if file_path:
+            self.file_input.setText(file_path)
+
     def get_data(self):
+        file_path = getattr(self, 'file_input', QLineEdit()).text().strip()
         return {
             "text": self.raw_text.toPlainText(),
+            "file_path": file_path,
             "separator": self.separator_input.text(),
+            "format": self.format_combo.currentData(),
             "metadata": {
                 "day": self.day_combo.currentText(),
                 "track": self.track_combo.currentText().split(" ")[0],
-                "section": self.section_combo.currentText()
+                "section": self.section_combo.currentText(),
+                "file_path": file_path
             }
+        }
+
+class TemplateBuilderDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Custom Template Builder")
+        self.setMinimumWidth(500)
+        self.setStyleSheet(DIALOG_STYLE)
+        self.layout = QVBoxLayout(self)
+
+        self.layout.addWidget(QLabel("<b>Create Custom Book Theme</b><br><span style='color:#666; font-size:12px;'>Design and export a reusable layout theme for the PDF Print Engine.</span>"))
+
+        form = QFormLayout()
+        self.theme_name = QLineEdit("My Custom Theme")
+        self.primary_color = QLineEdit("#176B87")
+        self.bg_color = QLineEdit("#FFFFFF")
+        self.text_color = QLineEdit("#0F172A")
+        
+        self.arabic_font = QComboBox()
+        self.arabic_font.addItems(["Amiri", "Scheherazade New", "Lateef", "Traditional Arabic"])
+        self.english_font = QComboBox()
+        self.english_font.addItems(["sans-serif", "serif", "Georgia", "Times New Roman"])
+
+        form.addRow("Theme Name:", self.theme_name)
+        form.addRow("Primary Color (Hex):", self.primary_color)
+        form.addRow("Background Color:", self.bg_color)
+        form.addRow("Text Color:", self.text_color)
+        form.addRow("Arabic Font:", self.arabic_font)
+        form.addRow("English Font:", self.english_font)
+        self.layout.addLayout(form)
+
+        self.buttons = QHBoxLayout()
+        self.save_btn = QPushButton("Export Theme")
+        self.save_btn.setObjectName("primaryBtn")
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        self.buttons.addWidget(self.save_btn)
+        self.buttons.addWidget(self.cancel_btn)
+        self.layout.addLayout(self.buttons)
+
+    def get_theme_data(self):
+        return {
+            "name": self.theme_name.text().strip(),
+            "primary_color": self.primary_color.text(),
+            "bg_color": self.bg_color.text(),
+            "text_color": self.text_color.text(),
+            "arabic_font": self.arabic_font.currentText(),
+            "english_font": self.english_font.currentText()
+        }
+
+class ExportDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Publish & Export Command Center")
+        self.setMinimumWidth(500)
+        self.setStyleSheet(DIALOG_STYLE)
+        self.layout = QVBoxLayout(self)
+
+        self.layout.addWidget(QLabel("<b>Universal Export Center</b><br><span style='color:#666; font-size:12px;'>Choose your target format and build settings.</span>"))
+
+        self.format_group = QGroupBox("Target Format")
+        form_layout = QVBoxLayout()
+        
+        self.format_combo = QComboBox()
+        self.format_combo.addItem("PDF (Digital / Screen)", "pdf_digital")
+        self.format_combo.addItem("PDF (Press-Ready CMYK + Bleed)", "pdf_print")
+        self.format_combo.addItem("ePub 3.0 (Digital E-Reader)", "epub")
+        self.format_combo.addItem("DOCX (Microsoft Word Manuscript)", "docx")
+        
+        form_layout.addWidget(self.format_combo)
+        self.format_group.setLayout(form_layout)
+        self.layout.addWidget(self.format_group)
+
+        self.options_group = QGroupBox("Build Options")
+        opt_layout = QVBoxLayout()
+        self.tajweed_check = QCheckBox("Render Dynamic Tajweed Rules")
+        self.tajweed_check.setChecked(True)
+        self.cover_check = QCheckBox("Generate Cover Page")
+        self.cover_check.setChecked(True)
+        self.footnotes_check = QCheckBox("Include Takhreej / Footnotes")
+        self.footnotes_check.setChecked(True)
+
+        opt_layout.addWidget(self.tajweed_check)
+        opt_layout.addWidget(self.cover_check)
+        opt_layout.addWidget(self.footnotes_check)
+        self.options_group.setLayout(opt_layout)
+        self.layout.addWidget(self.options_group)
+
+        self.buttons = QHBoxLayout()
+        self.export_btn = QPushButton("🚀 Build & Publish")
+        self.export_btn.setObjectName("primaryBtn")
+        self.export_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        self.buttons.addWidget(self.export_btn)
+        self.buttons.addWidget(self.cancel_btn)
+        self.layout.addLayout(self.buttons)
+
+    def get_options(self):
+        return {
+            "format": self.format_combo.currentData(),
+            "enable_tajweed": self.tajweed_check.isChecked(),
+            "include_cover": self.cover_check.isChecked(),
+            "include_footnotes": self.footnotes_check.isChecked()
         }

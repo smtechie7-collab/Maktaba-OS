@@ -1,19 +1,18 @@
 import pytest
 import os
 import sys
+from pathlib import Path
 
-# Add src to path
+# Ensure the src module is in the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-TEST_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".pytest_cache", "maktaba-test-data"))
-os.environ.setdefault("MAKTABA_DATA_DIR", TEST_DATA_DIR)
-os.environ.setdefault("MAKTABA_LOG_DIR", os.path.join(TEST_DATA_DIR, "logs"))
+from src.data.database import DatabaseManager
 
 @pytest.fixture
-def test_db(tmp_path):
-    """Fixture for a temporary test database."""
-    db_path = tmp_path / "test_maktaba_suite.db"
-    
-    from src.data.database import DatabaseManager
-    db = DatabaseManager(str(db_path))
-    yield db
+def temp_db(tmp_path):
+    """
+    Provides an isolated, temporary SQLite database instance for each test.
+    Ensures tests don't corrupt the user's real library.
+    """
+    db_path = tmp_path / "test_maktaba.db"
+    return DatabaseManager(str(db_path))

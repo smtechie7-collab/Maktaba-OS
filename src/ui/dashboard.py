@@ -2,14 +2,18 @@ import sys
 import os
 import json
 import re
+import glob
+import importlib.util
+import copy
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QListWidget,
                              QMessageBox, QLineEdit, QTreeWidget, QTreeWidgetItem,
                              QTabWidget, QDockWidget, QFileDialog, QTextBrowser, QMenuBar, QMenu, QStackedWidget,
-                             QListWidgetItem, QFrame, QStyle, QComboBox, QAbstractItemView, QSplitter)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer, QSize
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QPixmap
+                             QListWidgetItem, QFrame, QStyle, QComboBox, QAbstractItemView, QSplitter, QProgressDialog,
+                             QCheckBox, QGroupBox, QSlider, QFormLayout)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer, QSize, QMimeData
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QPixmap, QIcon
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -22,9 +26,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 
 from src.data.database import DatabaseManager
 from src.layout.pdf_generator import PDFGenerator
+from src.layout.epub_generator import EPUBGenerator
 from src.core.config import load_config
 from src.core.errors import install_global_exception_handler
-from src.ui.dialogs import BookDialog, ChapterDialog, BulkImportDialog
+from src.ui.dialogs import BookDialog, ChapterDialog, BulkImportDialog, TemplateBuilderDialog, ExportDialog
 from src.ui.components.editor_panel import EditorPanel
 from src.ui.components.audio_panel import AudioPanel
 from src.ui.components.properties_panel import PropertiesPanel
@@ -33,6 +38,7 @@ from src.ui.components.command_palette import CommandPalette
 from src.ui.search_dialog import SearchReplaceDialog
 from src.ui.workers import DbWorker
 from src.ui.styles.style_loader import load_stylesheet
+from src.utils.tajweed_parser import TajweedEngine
 
 class BookCard(QFrame):
     """Custom Widget to display a Book in the Library Grid like a professional bookshelf card."""
@@ -69,6 +75,101 @@ class BookCard(QFrame):
         layout.addWidget(self.title_label, stretch=1)
         layout.addWidget(self.meta_label)
 
+class AssetListWidget(QListWidget):
+    def mimeData(self, items):
+        mime_data = QMimeData()
+        urls = []
+        for item in items:
+            url = item.data(Qt.ItemDataRole.UserRole)
+            if url:
+                urls.append(QUrl(url))
+        mime_data.setUrls(urls)
+        return mime_data
+
+class AssetManagerPanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        
+        toolbar = QHBoxLayout()
+        self.add_btn = QPushButton("+ Add Images")
+        self.add_btn.setObjectName("secondaryBtn")
+        self.add_btn.clicked.connect(self.add_images)
+        toolbar.addWidget(QLabel("Drag & Drop into Preview"))
+        toolbar.addStretch()
+        toolbar.addWidget(self.add_btn)
+        layout.addLayout(toolbar)
+        
+        self.list_widget = AssetListWidget()
+        self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
+        self.list_widget.setIconSize(QSize(90, 90))
+        self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.list_widget.setDragEnabled(True)
+        self.list_widget.setSpacing(10)
+        self.list_widget.setStyleSheet("QListWidget { background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 6px; } QListWidget::item { padding: 5px; } QListWidget::item:selected { background: #E2E8F0; }")
+        layout.addWidget(self.list_widget)
+        
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.assets_dir = os.path.join(app_dir, "assets", "images")
+        os.makedirs(self.assets_dir, exist_ok=True)
+        self.load_assets()
+        
+    def add_images(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.svg)")
+        import shutil
+        for f in files:
+            dest = os.path.join(self.assets_dir, os.path.basename(f))
+            if not os.path.exists(dest) or f != dest:
+                shutil.copy(f, dest)
+        self.load_assets()
+        
+    def load_assets(self):
+        self.list_widget.clear()
+        for f in glob.glob(os.path.join(self.assets_dir, "*.*")):
+            if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.svg')):
+                item = QListWidgetItem(QIcon(f), os.path.basename(f)[:12] + "...")
+                item.setToolTip(os.path.basename(f))
+                file_url = QUrl.fromLocalFile(f).toString()
+                item.setData(Qt.ItemDataRole.UserRole, file_url)
+                self.list_widget.addItem(item)
+
+class VisualPropertyInspector(QGroupBox):
+    properties_changed = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__("✨ Visual Typography Inspector", parent)
+        layout = QFormLayout(self)
+        
+        self.drop_cap_slider = QSlider(Qt.Orientation.Horizontal)
+        self.drop_cap_slider.setRange(0, 80)
+        self.drop_cap_slider.setValue(0)
+        self.drop_cap_slider.setToolTip("Size of the first letter (Drop Cap) in pts. 0 disables it.")
+        self.drop_cap_slider.valueChanged.connect(self.properties_changed.emit)
+        
+        self.leading_slider = QSlider(Qt.Orientation.Horizontal)
+        self.leading_slider.setRange(10, 40)
+        self.leading_slider.setValue(14)
+        self.leading_slider.setToolTip("Line height multiplier (Leading).")
+        self.leading_slider.valueChanged.connect(self.properties_changed.emit)
+        
+        self.kerning_slider = QSlider(Qt.Orientation.Horizontal)
+        self.kerning_slider.setRange(-5, 20)
+        self.kerning_slider.setValue(0)
+        self.kerning_slider.setToolTip("Letter spacing in pts (Kerning).")
+        self.kerning_slider.valueChanged.connect(self.properties_changed.emit)
+        
+        layout.addRow("Drop Cap Size:", self.drop_cap_slider)
+        layout.addRow("Line Height:", self.leading_slider)
+        layout.addRow("Kerning (Spacing):", self.kerning_slider)
+        
+        self.setStyleSheet("QSlider::handle:horizontal { background: #176B87; width: 14px; margin: -4px 0; border-radius: 7px; } QSlider::groove:horizontal { background: #CBD5E1; height: 6px; border-radius: 3px; }")
+
+    def get_values(self):
+        return {
+            "drop_cap": self.drop_cap_slider.value(),
+            "leading": self.leading_slider.value() / 10.0,
+            "kerning": self.kerning_slider.value()
+        }
+
 class PDFWorker(QThread):
     finished = pyqtSignal(bool, str)
     def __init__(self, book_id, output_path, styles=None):
@@ -78,6 +179,33 @@ class PDFWorker(QThread):
         try:
             generator = PDFGenerator()
             generator.generate_pdf(self.book_id, self.output_path, styles=self.styles)
+            self.finished.emit(True, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+class EPUBWorker(QThread):
+    finished = pyqtSignal(bool, str)
+    def __init__(self, book_id, output_path, styles=None):
+        super().__init__()
+        self.book_id = book_id; self.output_path = output_path; self.styles = styles
+    def run(self):
+        try:
+            generator = EPUBGenerator()
+            generator.generate_epub(self.book_id, self.output_path, styles=self.styles)
+            self.finished.emit(True, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+class DOCXWorker(QThread):
+    finished = pyqtSignal(bool, str)
+    def __init__(self, book_id, output_path, styles=None):
+        super().__init__()
+        self.book_id = book_id; self.output_path = output_path; self.styles = styles
+    def run(self):
+        try:
+            from src.layout.docx_generator import DOCXGenerator
+            generator = DOCXGenerator()
+            generator.generate_docx(self.book_id, self.output_path, styles=self.styles)
             self.finished.emit(True, self.output_path)
         except Exception as e:
             self.finished.emit(False, str(e))
@@ -106,12 +234,24 @@ class PreviewWorker(QThread):
 
             with db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (self.book_id,))
+                cursor.execute("SELECT title, author, language, metadata FROM Books WHERE id = ?", (self.book_id,))
                 book_info = cursor.fetchone()
                 
             book_metadata = {}
-            if book_info and book_info['metadata']:
-                book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
+            is_rtl = False
+            if book_info:
+                is_rtl = book_info['language'] in ['ar', 'ur']
+                if book_info['metadata']:
+                    book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
+
+            m = self.styles.get("margins", {})
+            page_geometry = {
+                "top": m.get("top", 20),
+                "bottom": m.get("bottom", 20),
+                "inside": m.get("left", 15) + m.get("gutter", 10),
+                "outside": m.get("right", 15),
+                "chapter_break": "left" if is_rtl else "right"
+            }
 
             content_blocks = db.get_book_content(self.book_id)
             chapters_data = []
@@ -130,9 +270,13 @@ class PreviewWorker(QThread):
                     chapters_data.append(current_chapter_dict)
 
                 if block['block_id']:
+                    content_data = json.loads(block['content_data'])
+                    if self.styles.get("enable_tajweed") and content_data.get('ar'):
+                        content_data['ar'] = TajweedEngine.apply_html(content_data['ar'])
+                        
                     current_chapter_dict['blocks'].append({
                         "block_id": block['block_id'],
-                        "content_data": json.loads(block['content_data']),
+                        "content_data": content_data,
                         "content_type": block['content_type'],
                         "footnotes": block.get('footnotes', [])
                     })
@@ -155,9 +299,14 @@ class PreviewWorker(QThread):
                         break
                 if target_chapter is None:
                     target_chapter = chapters_data[-1]
+                    
+                draft_copy = copy.deepcopy(self.draft_data)
+                if self.styles.get("enable_tajweed") and draft_copy.get('ar'):
+                    draft_copy['ar'] = TajweedEngine.apply_html(draft_copy['ar'])
+                    
                 target_chapter['blocks'].append({
                     "block_id": "draft",
-                    "content_data": self.draft_data,
+                    "content_data": draft_copy,
                     "content_type": "text",
                     "footnotes": self.draft_data.get('footnotes', [])
                 })
@@ -168,7 +317,13 @@ class PreviewWorker(QThread):
                 book_metadata=book_metadata,
                 chapters=chapters_data,
                 margins=self.styles.get("margins"),
-                fonts=self.styles.get("fonts")
+                page_geometry=page_geometry,
+                is_rtl=is_rtl,
+                fonts=self.styles.get("fonts"),
+                preview_mode=self.preview_mode,
+                press_ready=self.styles.get("press_ready", False),
+                theme=self.styles.get("theme"),
+                enable_3d_flip=self.styles.get("enable_3d_flip", False)
             )
             self.finished.emit(self.request_id, True, html_content)
         except Exception as e:
@@ -227,6 +382,11 @@ class MaktabaDashboard(QMainWindow):
         self.preview_timer.setSingleShot(True)
         self.preview_timer.setInterval(400)
         self.preview_timer.timeout.connect(self._start_live_preview)
+        
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setInterval(30000) # Auto-save every 30 seconds
+        self.autosave_timer.timeout.connect(self.process_autosave)
+        self.autosave_timer.start()
         self.init_ui()
 
     def init_ui(self):
@@ -329,7 +489,8 @@ class MaktabaDashboard(QMainWindow):
         self.studio_splitter = QSplitter(Qt.Orientation.Vertical)
         self.editor_panel = EditorPanel()
         self.editor_panel.save_requested.connect(self.save_content_block)
-        self.editor_panel.text_changed_live.connect(self.update_live_preview)
+        self.editor_panel.text_changed_live.connect(self.apply_delta_preview)
+        self.editor_panel.karaoke_sync_requested.connect(self.handle_karaoke_space_sync)
         self.build_command_bar()
         
         self.audio_panel = AudioPanel()
@@ -433,6 +594,12 @@ class MaktabaDashboard(QMainWindow):
         self.preview_mode_combo.addItems(["Full Book", "Active Chapter"])
         self.preview_mode_combo.currentTextChanged.connect(self.update_live_preview)
         preview_toolbar.addWidget(self.preview_mode_combo)
+        
+        self.flip_mode_check = QCheckBox("📖 3D Flip")
+        self.flip_mode_check.setToolTip("Enable immersive 3D page flipping.")
+        self.flip_mode_check.stateChanged.connect(self.update_live_preview)
+        preview_toolbar.addWidget(self.flip_mode_check)
+        
         preview_toolbar.addStretch()
         preview_layout.addLayout(preview_toolbar)
         
@@ -463,16 +630,42 @@ class MaktabaDashboard(QMainWindow):
         self.properties_panel = PropertiesPanel()
         self.properties_panel.holy_checkbox.stateChanged.connect(self.editor_panel.toggle_holy_highlighter)
         self.properties_panel.tabs.currentChanged.connect(self.update_live_preview)
-        self.properties_panel.properties_changed.connect(self.update_live_preview)
+        self.properties_panel.properties_changed.connect(self.apply_style_delta_update)
         
         prop_layout.addWidget(self.properties_panel)
-        self.gen_pdf_btn = QPushButton("Build Press PDF")
-        self.gen_pdf_btn.setObjectName("primaryBtn")
-        self.gen_pdf_btn.clicked.connect(self.handle_pdf_generation)
-        prop_layout.addWidget(self.gen_pdf_btn)
+
+        self.visual_inspector = VisualPropertyInspector()
+        self.visual_inspector.properties_changed.connect(self.apply_style_delta_update)
+        prop_layout.addWidget(self.visual_inspector)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Default Theme", None)
+        self.load_available_themes()
+        self.theme_combo.currentIndexChanged.connect(self.apply_style_delta_update)
+        prop_layout.addWidget(QLabel("<b>Book Theme:</b>"))
+        prop_layout.addWidget(self.theme_combo)
+
+        self.press_ready_checkbox = QCheckBox("Preview Press Ready Marks (Bleed & Crop)")
+        self.press_ready_checkbox.setToolTip("Simulate crop marks in the Live Preview.")
+        self.press_ready_checkbox.setStyleSheet("QCheckBox { margin-top: 10px; }")
+        self.press_ready_checkbox.stateChanged.connect(self.update_live_preview)
+        prop_layout.addWidget(self.press_ready_checkbox)
+
+        self.publish_btn = QPushButton("🚀 Publish Project")
+        self.publish_btn.setObjectName("primaryBtn")
+        self.publish_btn.clicked.connect(self.show_export_dialog)
+        prop_layout.addWidget(self.publish_btn)
 
         self.prop_dock.setWidget(prop_widget)
+        
+        self.assets_dock = QDockWidget("Image & Asset Manager", self)
+        self.assets_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.asset_manager = AssetManagerPanel()
+        self.assets_dock.setWidget(self.asset_manager)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.assets_dock)
+        
         self.tabifyDockWidget(self.preview_dock, self.prop_dock)
+        self.tabifyDockWidget(self.prop_dock, self.assets_dock)
         self.preview_dock.raise_()
 
         self.create_menu_bar()
@@ -482,6 +675,15 @@ class MaktabaDashboard(QMainWindow):
         self.update_action_states()
         self.statusBar().showMessage("Maktaba Studio Ready.")
         self.show_library_view()
+        
+    def process_autosave(self):
+        """Background autosave worker to protect unsaved work without freezing the UI."""
+        if not self.current_book_id or not self.current_chapter_id: return
+            
+        if hasattr(self, 'editor_panel') and getattr(self.editor_panel, '_is_dirty', False):
+            data = self.editor_panel.get_data()
+            worker = DbWorker(self.db.save_draft, self.current_book_id, self.current_chapter_id, self.selected_block_id, data)
+            worker.start()
 
     def show_library_view(self):
         """Hides the complex studio and shows only the clean library screen."""
@@ -493,6 +695,20 @@ class MaktabaDashboard(QMainWindow):
             self.command_bar.hide()
         self.statusBar().showMessage("Maktaba Library")
 
+    def check_unsaved_changes(self) -> bool:
+        """Checks if the editor has unsaved changes. Returns True if safe to proceed."""
+        if hasattr(self, 'editor_panel') and getattr(self.editor_panel, '_is_dirty', False):
+            reply = QMessageBox.warning(
+                self,
+                "Unsaved Changes",
+                "You have unsaved changes in the current block. Do you want to discard them and continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return False
+        return True
+
     def on_library_selection_changed(self):
         has_selection = len(self.book_list.selectedItems()) > 0
         self.lib_edit_btn.setEnabled(has_selection)
@@ -500,6 +716,7 @@ class MaktabaDashboard(QMainWindow):
 
     def open_selected_book(self, item):
         """Transitions from the library into the authoring studio."""
+        if not self.check_unsaved_changes(): return
         book_id = item.data(Qt.ItemDataRole.UserRole)
         self.open_book_by_id(book_id)
 
@@ -521,6 +738,7 @@ class MaktabaDashboard(QMainWindow):
 
     def close_book_and_go_home(self):
         """Closes the current project and returns to the library."""
+        if not self.check_unsaved_changes(): return
         self.current_book_id = None
         self.current_chapter_id = None
         self.selected_block_id = None
@@ -577,9 +795,13 @@ class MaktabaDashboard(QMainWindow):
         self.find_replace_btn = QPushButton("🔍 Find & Replace")
         self.find_replace_btn.clicked.connect(self.show_find_replace_dialog)
         
+        self.template_builder_btn = QPushButton("🎨 Theme Builder")
+        self.template_builder_btn.clicked.connect(self.show_template_builder_dialog)
+        
         layout.addWidget(self.quick_chapter_btn)
         layout.addWidget(self.smart_paste_btn)
         layout.addWidget(self.find_replace_btn)
+        layout.addWidget(self.template_builder_btn)
         layout.addWidget(self.quick_save_btn)
 
         self.activity_label = QLabel("Ready")
@@ -594,7 +816,7 @@ class MaktabaDashboard(QMainWindow):
             ("Ctrl+S", self.editor_panel.on_save_clicked),
             ("Ctrl+F", self.book_search.setFocus),
             ("Ctrl+K", self.show_command_palette),
-            ("Ctrl+P", self.handle_pdf_generation),
+            ("Ctrl+P", self.show_export_dialog),
             ("Ctrl+I", self.show_bulk_import_dialog),
             ("Ctrl+H", self.show_find_replace_dialog),
             ("Esc", self.editor_panel.clear_fields),
@@ -624,8 +846,8 @@ class MaktabaDashboard(QMainWindow):
             self.editor_panel.on_save_clicked()
         elif command == "restore_block":
             self.restore_selected_block()
-        elif command == "pdf":
-            self.handle_pdf_generation()
+        elif command == "publish":
+            self.show_export_dialog()
         elif command == "import":
             self.show_bulk_import_dialog()
         elif command == "replace":
@@ -656,6 +878,11 @@ class MaktabaDashboard(QMainWindow):
             self.statusBar().showMessage(f"🎤 Karaoke Sync: Timestamp {time_sec:.2f}s mapped to word!", 3000)
         else:
             self.statusBar().showMessage(f"Audio Timeline Scrubbed to {time_sec:.2f}s. (Open Word-by-Word Sync tab to map)", 3000)
+
+    def handle_karaoke_space_sync(self):
+        current_time = getattr(self.audio_panel, 'current_audio_time', 0.0)
+        self.editor_panel.capture_audio_timestamp(current_time)
+        self.statusBar().showMessage(f"🎤 Karaoke Continuous Sync: {current_time:.2f}s mapped via Spacebar!", 2000)
 
     def handle_audio_playback_sync(self, time_sec):
         """Continuously syncs the 3D book Live Preview Karaoke highlight with the playing audio."""
@@ -694,6 +921,20 @@ class MaktabaDashboard(QMainWindow):
                 raw_data = block['content_data']
                 data_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
                 data_dict["footnotes"] = block.get("footnotes", [])
+                
+                # --- AUTO-SAVE RECOVERY CHECK ---
+                draft = self.db.get_draft(self.current_book_id, self.current_chapter_id, self.selected_block_id)
+                if draft:
+                    reply = QMessageBox.question(
+                        self, "Recover Draft?",
+                        "An unsaved draft from a previous session exists for this block. Would you like to recover it?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        data_dict = draft
+                    else:
+                        self.db.clear_draft(self.current_book_id, self.current_chapter_id, self.selected_block_id)
+                        
                 self.editor_panel.load_data_for_editing(block_id, data_dict)
                 self.statusBar().showMessage(f"Loaded Block #{block_id} for editing.", 3000)
                 break
@@ -720,6 +961,121 @@ class MaktabaDashboard(QMainWindow):
         except Exception as e:
             print(f"Live WYSIWYG edit failed: {e}")
 
+    def apply_delta_preview(self):
+        """Applies delta DOM updates to the 3D preview without rebuilding Jinja HTML. Solves CPU lag."""
+        if not self.current_book_id: return
+        
+        if not WEB_ENGINE_AVAILABLE or not isinstance(self.preview_browser, QWebEngineView):
+            self.update_live_preview()
+            return
+
+        block_id = self.editor_panel.current_editing_block_id or 'draft'
+        data = self.editor_panel.get_data()
+
+        if data.get('words'):
+            # Karaoke Word-by-Word grids require full structural rebuilds
+            self.update_live_preview()
+            return
+
+        js_func = """
+        (function() {
+            var blockId = '%s';
+            var data = %s;
+            
+            var blockDiv = document.getElementById('block-' + blockId);
+            if (!blockDiv) {
+                return false; // Draft container doesn't exist yet, need full Jinja render
+            }
+
+            for (var lang in data) {
+                if (['ar', 'ur', 'guj', 'en'].includes(lang)) {
+                    var el = document.getElementById('text-' + blockId + '-' + lang);
+                    var textContent = (typeof data[lang] === 'string') ? data[lang].trim() : "";
+                    if (el) {
+                        if (el.innerHTML !== textContent) {
+                            el.innerHTML = textContent;
+                        }
+                    } else if (textContent !== '') {
+                        // Element doesn't exist but has text now, needs full render to create the DOM node
+                        return false;
+                    }
+                }
+            }
+            return true; // Delta applied perfectly!
+        })();
+        """ % (block_id, json.dumps(data))
+
+        def callback(success):
+            if not success:
+                self.update_live_preview()
+
+        self.preview_browser.page().runJavaScript(js_func, callback)
+
+    def apply_style_delta_update(self):
+        """Applies style property changes to the live preview via CSS variables without a full page reload."""
+        if not WEB_ENGINE_AVAILABLE or not hasattr(self, 'preview_browser') or not isinstance(self.preview_browser, QWebEngineView):
+            self.update_live_preview() # Fallback for non-webengine or if something is wrong
+            return
+
+        styles = self.properties_panel.get_styles()
+        js_parts = []
+        
+        theme = self.theme_combo.currentData()
+        if theme:
+            if theme.get('primary_color'): js_parts.append(f"document.documentElement.style.setProperty('--primary-color', '{theme['primary_color']}');")
+            if theme.get('bg_color'): js_parts.append(f"document.documentElement.style.setProperty('--bg-color', '{theme['bg_color']}');")
+            if theme.get('text_color'): js_parts.append(f"document.documentElement.style.setProperty('--text-color', '{theme['text_color']}');")
+
+        # Margins
+        margins = styles.get('margins', {})
+        for key, value in margins.items():
+            js_parts.append(f"document.documentElement.style.setProperty('--margin-{key}', '{value}mm');")
+
+        # Fonts
+        fonts = styles.get('fonts', {})
+        font_map = {
+            'arabic': 'arabic', 'urdu': 'urdu', 'gujarati': 'gujarati', 'english': 'english'
+        }
+        prop_map = {
+            'size': 'font-size', 'leading': 'line-height', 'kerning': 'letter-spacing', 'align': 'text-align'
+        }
+
+        for lang_key, lang_css in font_map.items():
+            for prop_key, prop_css in prop_map.items():
+                # e.g., fonts['arabic_size']
+                full_key = f"{lang_key}_{prop_key}"
+                if full_key in fonts:
+                    value = fonts[full_key]
+                    unit = 'pt' if prop_key in ['size', 'kerning'] else ''
+                    css_var = f"--{lang_css}-{prop_css}"
+                    js_parts.append(f"document.documentElement.style.setProperty('{css_var}', '{value}{unit}');")
+            
+            if lang_key in fonts:
+                font_family = fonts[lang_key]
+                if theme and lang_key == 'arabic' and theme.get('arabic_font'):
+                    font_family = theme['arabic_font']
+                elif theme and lang_key == 'english' and theme.get('english_font'):
+                    font_family = theme['english_font']
+                css_var = f"--{lang_css}-font-family"
+                fallback = "'sans-serif'" if lang_key == 'gujarati' else "'serif'"
+                js_parts.append(f"document.documentElement.style.setProperty('{css_var}', `'{font_family}', {fallback}`);")
+
+        if hasattr(self, 'visual_inspector'):
+            vals = self.visual_inspector.get_values()
+            if vals['drop_cap'] > 0:
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-size', '{vals['drop_cap']}pt');")
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-float', 'left');")
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-padding', '8px');")
+            else:
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-size', 'inherit');")
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-float', 'none');")
+                js_parts.append(f"document.documentElement.style.setProperty('--drop-cap-padding', '0px');")
+                
+            js_parts.append(f"document.documentElement.style.setProperty('--english-line-height', '{vals['leading']}');")
+            js_parts.append(f"document.documentElement.style.setProperty('--english-letter-spacing', '{vals['kerning']}pt');")
+
+        self.preview_browser.page().runJavaScript(" ".join(js_parts))
+
     def update_live_preview(self, *args):
         if not self.current_book_id: return
         self.preview_timer.start()
@@ -737,6 +1093,9 @@ class MaktabaDashboard(QMainWindow):
         request_id = self.preview_request_id
         draft_data = self.editor_panel.get_data()
         styles = self.properties_panel.get_styles()
+        styles['press_ready'] = self.press_ready_checkbox.isChecked()
+        styles['theme'] = self.theme_combo.currentData()
+        styles['enable_3d_flip'] = self.flip_mode_check.isChecked() if hasattr(self, 'flip_mode_check') else False
         mode = self.preview_mode_combo.currentText() if hasattr(self, 'preview_mode_combo') else "Full Book"
         self.preview_worker = PreviewWorker(
             request_id=request_id,
@@ -756,7 +1115,12 @@ class MaktabaDashboard(QMainWindow):
             if success:
                 if WEB_ENGINE_AVAILABLE:
                     # Inject bridge script dynamically and pass base URL for assets
-                    bridge_script = "<script src='qrc:///qtwebchannel/qwebchannel.js'></script><script>new QWebChannel(qt.webChannelTransport, function(channel){ window.pybridge = channel.objects.pybridge; });</script>"
+                    bridge_script = """
+                    <script src='qrc:///qtwebchannel/qwebchannel.js'></script>
+                    <script>
+                        new QWebChannel(qt.webChannelTransport, function(channel){ window.pybridge = channel.objects.pybridge; });
+                    </script>
+                    """
                     self.preview_browser.setHtml(bridge_script + message, QUrl.fromLocalFile(str(self.config.template_dir) + "/"))
                 else:
                     self.preview_browser.setHtml(message)
@@ -925,38 +1289,65 @@ class MaktabaDashboard(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self.db.delete_chapter(self.current_chapter_id)
+        
+        self.nav_dock.setEnabled(False)
+        self.statusBar().showMessage("Deleting chapter...", 0)
+        self._del_chap_worker = DbWorker(self.db.delete_chapter, self.current_chapter_id)
+        self._del_chap_worker.finished.connect(self._on_delete_chapter_finished)
+        self._del_chap_worker.start()
+
+    def _on_delete_chapter_finished(self, _):
+        self.nav_dock.setEnabled(True)
         self.current_chapter_id = None
         self.selected_block_id = None
         self.refresh_structure()
         self.update_action_states()
+        self.statusBar().showMessage("Chapter deleted.", 3000)
 
     def move_current_chapter(self, direction):
         if not self.current_chapter_id:
             return QMessageBox.warning(self, "Error", "Select a chapter first.")
-        self.db.move_chapter(self.current_chapter_id, direction)
+            
+        self.nav_dock.setEnabled(False)
+        self._move_chap_worker = DbWorker(self.db.move_chapter, self.current_chapter_id, direction)
+        self._move_chap_worker.finished.connect(self._on_move_chapter_finished)
+        self._move_chap_worker.start()
+
+    def _on_move_chapter_finished(self, _):
+        self.nav_dock.setEnabled(True)
         self.refresh_structure()
         self.update_action_states()
 
     def handle_tree_drag_drop(self, drag_data, target_data, pos_str):
         self.statusBar().showMessage("Reordering structure...", 2000)
+        self.chapter_tree.setEnabled(False)
+        
+        self._reorder_worker = DbWorker(self._execute_reorder, drag_data, target_data, pos_str)
+        self._reorder_worker.finished.connect(self._on_reorder_finished)
+        self._reorder_worker.error.connect(self._on_reorder_error)
+        self._reorder_worker.start()
+
+    def _execute_reorder(self, drag_data, target_data, pos_str):
         drag_type = drag_data.get('type')
         target_type = target_data.get('type')
-        
-        try:
-            if drag_type == 'chapter' and target_type == 'chapter':
-                self.db.reorder_chapter(drag_data['id'], target_data['id'], pos_str)
-            elif drag_type == 'block' and target_type == 'block':
-                self.db.reorder_block(drag_data['id'], target_data['id'], pos_str)
-            elif drag_type == 'block' and target_type == 'chapter':
-                self.db.reorder_block_to_chapter(drag_data['id'], target_data['id'])
-                
-            self.refresh_structure()
-            self.update_live_preview()
-            self.statusBar().showMessage("Reordering successful.", 3000)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to reorder: {str(e)}")
-            self.refresh_structure()
+        if drag_type == 'chapter' and target_type == 'chapter':
+            self.db.reorder_chapter(drag_data['id'], target_data['id'], pos_str)
+        elif drag_type == 'block' and target_type == 'block':
+            self.db.reorder_block(drag_data['id'], target_data['id'], pos_str)
+        elif drag_type == 'block' and target_type == 'chapter':
+            self.db.reorder_block_to_chapter(drag_data['id'], target_data['id'])
+        return True
+
+    def _on_reorder_finished(self, result):
+        self.chapter_tree.setEnabled(True)
+        self.refresh_structure()
+        self.update_live_preview()
+        self.statusBar().showMessage("Reordering successful.", 3000)
+
+    def _on_reorder_error(self, err_msg):
+        self.chapter_tree.setEnabled(True)
+        QMessageBox.critical(self, "Error", f"Failed to reorder: {err_msg}")
+        self.refresh_structure()
 
     def _fetch_structure_data(self, book_id):
         """Runs on the background thread to fetch heavy tree data."""
@@ -1036,6 +1427,7 @@ class MaktabaDashboard(QMainWindow):
         self.update_action_states()
 
     def handle_structure_click(self, item, column):
+        if not self.check_unsaved_changes(): return
         payload = item.data(0, Qt.ItemDataRole.UserRole)
         if not payload:
             return
@@ -1061,12 +1453,12 @@ class MaktabaDashboard(QMainWindow):
         self.editor_panel.setEnabled(False)
         self.statusBar().showMessage("Saving to database...")
         
-        self._save_worker = DbWorker(self._execute_save, update_id, self.current_chapter_id, data, footnotes)
+        self._save_worker = DbWorker(self._execute_save, update_id, self.current_chapter_id, data, footnotes, self.current_book_id)
         self._save_worker.finished.connect(self._on_save_finished)
         self._save_worker.error.connect(self._on_save_error)
         self._save_worker.start()
 
-    def _execute_save(self, update_id, chapter_id, data, footnotes):
+    def _execute_save(self, update_id, chapter_id, data, footnotes, book_id):
         if update_id:
             self.db.update_content_block(update_id, data)
             block_id = update_id
@@ -1076,13 +1468,13 @@ class MaktabaDashboard(QMainWindow):
             block_id = self.db.add_content_block(chapter_id, data)
             action = "insert"
         self.db.sync_footnotes(block_id, footnotes)
+        self.db.clear_draft(book_id, chapter_id, update_id) # Clear draft upon successful save
         return {"action": action, "id": block_id, "chapter_id": chapter_id}
 
     def _on_save_finished(self, result):
         self.statusBar().showMessage(f"Block #{result['id']} {'Updated' if result['action'] == 'update' else 'Saved'}!", 3000)
         if result["action"] == "insert": self.selected_block_id = result["id"]
         self.refresh_structure() 
-        self.editor_panel.clear_fields()
         self.editor_panel.setEnabled(True)
 
     def _on_save_error(self, err_msg):
@@ -1100,7 +1492,14 @@ class MaktabaDashboard(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self.db.soft_delete_content_block(self.selected_block_id)
+            
+        self.nav_dock.setEnabled(False)
+        self._del_block_worker = DbWorker(self.db.soft_delete_content_block, self.selected_block_id)
+        self._del_block_worker.finished.connect(self._on_delete_block_finished)
+        self._del_block_worker.start()
+
+    def _on_delete_block_finished(self, _):
+        self.nav_dock.setEnabled(True)
         self.selected_block_id = None
         self.editor_panel.clear_fields()
         self.refresh_structure()
@@ -1119,7 +1518,14 @@ class MaktabaDashboard(QMainWindow):
     def move_selected_block(self, direction):
         if not self.selected_block_id:
             return QMessageBox.warning(self, "Error", "Select a block first.")
-        self.db.move_content_block(self.selected_block_id, direction)
+            
+        self.nav_dock.setEnabled(False)
+        self._move_block_worker = DbWorker(self.db.move_content_block, self.selected_block_id, direction)
+        self._move_block_worker.finished.connect(self._on_move_block_finished)
+        self._move_block_worker.start()
+
+    def _on_move_block_finished(self, _):
+        self.nav_dock.setEnabled(True)
         self.refresh_structure()
         self.update_live_preview()
 
@@ -1175,7 +1581,7 @@ class MaktabaDashboard(QMainWindow):
         self.delete_chap_btn.setEnabled(has_chapter)
         self.chapter_up_btn.setEnabled(has_chapter)
         self.chapter_down_btn.setEnabled(has_chapter)
-        self.gen_pdf_btn.setEnabled(has_book)
+        self.publish_btn.setEnabled(has_book)
         self.block_up_btn.setEnabled(has_block)
         self.block_down_btn.setEnabled(has_block)
         self.duplicate_block_btn.setEnabled(has_block)
@@ -1194,11 +1600,61 @@ class MaktabaDashboard(QMainWindow):
         if hasattr(self, "editor_panel"):
             self.editor_panel.setEnabled(has_chapter)
 
+    def show_template_builder_dialog(self):
+        dialog = TemplateBuilderDialog(self)
+        if dialog.exec():
+            theme = dialog.get_theme_data()
+            
+            # Save to assets/themes/ folder
+            app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            themes_dir = os.path.join(app_dir, "assets", "themes")
+            os.makedirs(themes_dir, exist_ok=True)
+            
+            file_name = f"{theme['name'].replace(' ', '_').lower()}.json"
+            with open(os.path.join(themes_dir, file_name), 'w', encoding='utf-8') as f:
+                json.dump(theme, f, indent=4)
+                
+            self.theme_combo.addItem(theme['name'], theme)
+            self.theme_combo.setCurrentIndex(self.theme_combo.count() - 1)
+            QMessageBox.information(self, "Theme Exported", f"Theme '{theme['name']}' saved successfully to:\n{themes_dir}/{file_name}")
+
+    def load_available_themes(self):
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        themes_dir = os.path.join(app_dir, "assets", "themes")
+        if not os.path.exists(themes_dir): return
+        for file in glob.glob(os.path.join(themes_dir, "*.json")):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    theme = json.load(f)
+                    self.theme_combo.addItem(theme.get('name', os.path.basename(file)), theme)
+            except Exception:
+                pass
+
+    def load_importer_plugins(self):
+        """Dynamically loads custom parser scripts from the plugins directory."""
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        plugins_dir = os.path.join(app_dir, "plugins", "importers")
+        os.makedirs(plugins_dir, exist_ok=True)
+        
+        plugins = {}
+        for file in glob.glob(os.path.join(plugins_dir, "*.py")):
+            name = os.path.basename(file)[:-3]
+            spec = importlib.util.spec_from_file_location(name, file)
+            mod = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(mod)
+                if hasattr(mod, "parse_import"):
+                    plugins[name] = mod
+            except Exception as e:
+                print(f"Failed to load plugin {name}: {e}")
+        return plugins
+
     def show_bulk_import_dialog(self):
         if not self.current_book_id: return QMessageBox.warning(self, "Error", "Select a book.")
         if not self.current_chapter_id: return QMessageBox.warning(self, "Error", "Select a chapter from the Project Explorer first to paste into.")
         
-        dialog = BulkImportDialog(self)
+        plugins = self.load_importer_plugins()
+        dialog = BulkImportDialog(self, plugins)
         if dialog.exec():
             data = dialog.get_data()
             self.statusBar().showMessage("Parsing and importing massive document... Please wait.")
@@ -1210,6 +1666,15 @@ class MaktabaDashboard(QMainWindow):
             self._import_worker.start()
 
     def _execute_bulk_import(self, chapter_id, data):
+        plugin = data.get('format')
+        if plugin and hasattr(plugin, 'parse_import'):
+            blocks = plugin.parse_import(data['text'], data['metadata'])
+            imported = 0
+            for b in blocks:
+                self.db.add_content_block(chapter_id, b)
+                imported += 1
+            return imported
+            
         separator_pattern = data['separator'].replace('\\n', '\n')
         blocks = re.split(r'\n\s*\n', data['text'].strip()) if separator_pattern == '\n\n' else data['text'].strip().split(separator_pattern)
         
@@ -1246,15 +1711,114 @@ class MaktabaDashboard(QMainWindow):
         self.studio_splitter.setEnabled(True)
         QMessageBox.critical(self, "Error", f"Bulk import failed: {err_msg}")
 
-    def handle_pdf_generation(self):
+    def show_find_replace_dialog(self):
+        if not self.current_book_id: return QMessageBox.warning(self, "Error", "Open a book first.")
+        
+        dialog = SearchReplaceDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            if not data.get("search"): return
+            
+            self.statusBar().showMessage(f"Replacing '{data['search']}' across the book... Please wait.", 0)
+            self.central_stack.setEnabled(False) # Lock UI during global operation
+            
+            self._replace_worker = DbWorker(self.db.global_replace, data["search"], data["replace"], data.get("language"), self.current_book_id)
+            self._replace_worker.finished.connect(self._on_replace_finished)
+            self._replace_worker.error.connect(self._on_replace_error)
+            self._replace_worker.start()
+            
+    def _on_replace_finished(self, updated_count):
+        self.central_stack.setEnabled(True)
+        self.refresh_structure()
+        self.update_live_preview()
+        QMessageBox.information(self, "Find & Replace Complete", f"Successfully updated {updated_count} blocks.")
+        self.statusBar().showMessage(f"Global Replace complete: {updated_count} blocks updated.", 5000)
+
+    def _on_replace_error(self, err_msg):
+        self.central_stack.setEnabled(True)
+        QMessageBox.critical(self, "Error", f"Find & Replace failed: {err_msg}")
+
+    def show_export_dialog(self):
         if not self.current_book_id: return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "book.pdf", "PDF Files (*.pdf)")
-        if not file_path: return
-        self.statusBar().showMessage("Building PDF Engine...")
-        styles = self.properties_panel.get_styles()
-        self.worker = PDFWorker(self.current_book_id, file_path, styles)
-        self.worker.finished.connect(lambda s, m: QMessageBox.information(self, "Done", m) if s else QMessageBox.critical(self, "Error", m))
-        self.worker.start()
+        
+        dialog = ExportDialog(self)
+        if dialog.exec():
+            options = dialog.get_options()
+            fmt = options['format']
+            
+            ext = "epub" if fmt == "epub" else "docx" if fmt == "docx" else "pdf"
+            file_filter = "ePub Files (*.epub)" if fmt == "epub" else "Word Documents (*.docx)" if fmt == "docx" else "PDF Files (*.pdf)"
+            
+            file_path, _ = QFileDialog.getSaveFileName(self, f"Save {ext.upper()}", f"book.{ext}", file_filter)
+            if not file_path: return
+            
+            styles = self.properties_panel.get_styles()
+            styles['theme'] = self.theme_combo.currentData()
+            styles['enable_tajweed'] = options['enable_tajweed']
+            styles['include_footnotes'] = options['include_footnotes']
+            styles['include_cover'] = options['include_cover']
+            styles['press_ready'] = (fmt == "pdf_print")
+            
+            if fmt == "epub":
+                self.epub_progress = QProgressDialog("Generating Digital ePub...\nStructuring metadata and chapters.", None, 0, 0, self)
+                self.epub_progress.setWindowTitle("Exporting ePub")
+                self.epub_progress.setWindowModality(Qt.WindowModality.WindowModal)
+                self.epub_progress.setCancelButton(None)
+                self.epub_progress.show()
+                
+                self.statusBar().showMessage("Building ePub Engine...")
+                self.epub_worker = EPUBWorker(self.current_book_id, file_path, styles)
+                self.epub_worker.finished.connect(self._on_epub_finished)
+                self.epub_worker.start()
+            elif fmt == "docx":
+                self.docx_progress = QProgressDialog("Generating Word Document...\nApplying RTL shaping and styles.", None, 0, 0, self)
+                self.docx_progress.setWindowTitle("Exporting DOCX")
+                self.docx_progress.setWindowModality(Qt.WindowModality.WindowModal)
+                self.docx_progress.setCancelButton(None)
+                self.docx_progress.show()
+                
+                self.statusBar().showMessage("Building DOCX Engine...")
+                self.docx_worker = DOCXWorker(self.current_book_id, file_path, styles)
+                self.docx_worker.finished.connect(self._on_docx_finished)
+                self.docx_worker.start()
+            else:
+                self.pdf_progress = QProgressDialog("Generating PDF...\nThis may take a few minutes for large books.", None, 0, 0, self)
+                self.pdf_progress.setWindowTitle("Exporting PDF")
+                self.pdf_progress.setWindowModality(Qt.WindowModality.WindowModal)
+                self.pdf_progress.setCancelButton(None)
+                self.pdf_progress.show()
+                
+                self.statusBar().showMessage("Building PDF Engine...")
+                self.worker = PDFWorker(self.current_book_id, file_path, styles)
+                self.worker.finished.connect(self._on_pdf_finished)
+                self.worker.start()
+
+    def _on_pdf_finished(self, success, message):
+        if hasattr(self, 'pdf_progress'):
+            self.pdf_progress.accept()
+            
+        if success:
+            QMessageBox.information(self, "Done", f"PDF successfully exported to:\n{message}")
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to generate PDF:\n{message}")
+
+    def _on_epub_finished(self, success, message):
+        if hasattr(self, 'epub_progress'):
+            self.epub_progress.accept()
+            
+        if success:
+            QMessageBox.information(self, "Done", f"ePub successfully exported to:\n{message}")
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to generate ePub:\n{message}")
+
+    def _on_docx_finished(self, success, message):
+        if hasattr(self, 'docx_progress'):
+            self.docx_progress.accept()
+            
+        if success:
+            QMessageBox.information(self, "Done", f"DOCX successfully exported to:\n{message}")
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to generate DOCX:\n{message}")
 
 def main():
     install_global_exception_handler()

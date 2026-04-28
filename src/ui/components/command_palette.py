@@ -58,7 +58,7 @@ class CommandPalette(QDialog):
             "Action: Undo/Restore Previous Block Version": "restore_block",
             "Action: Trigger Bulk Import": "import",
             "Action: Global Find & Replace": "replace",
-            "Export: Generate Print-Ready PDF (CMYK)": "pdf",
+            "Export: Publish / Export Project": "publish",
             "Toggle: Focus Mode": "focus",
             "Toggle: Holy Name Highlighter": "highlighter",
             "View: Open Audio Sync & Trim Panel": "audio",

@@ -6,6 +6,16 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTo
                              QMessageBox, QFrame, QColorDialog, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QTextCursor
+from src.ui.components.tajweed_highlighter import TajweedHighlighter
+
+class KaraokeTableWidget(QTableWidget):
+    space_pressed = pyqtSignal()
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self.space_pressed.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 class AdvancedTextEdit(QTextEdit):
     """Custom TextEdit that emits signals when it gains or loses focus."""
@@ -14,20 +24,51 @@ class AdvancedTextEdit(QTextEdit):
     def __init__(self, field_id, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.field_id = field_id
+        # Enable advanced typography features for proper RTL/Ligature rendering
+        doc = self.document()
+        opts = doc.defaultTextOption()
+        opts.setUseDesignMetrics(True) # Fixes Harakat vertical clipping
+        doc.setDefaultTextOption(opts)
 
     def focusInEvent(self, event):
         super().focusInEvent(event)
         self.focus_in.emit(self.field_id)
 
+    def insertFromMimeData(self, source):
+        """Intercept paste events to strip bloated styling (e.g. from MS Word) but keep basic structure."""
+        if source.hasHtml():
+            html = source.html()
+            # Strip out <style>, <script>, <meta>, and HTML comments
+            html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.IGNORECASE | re.DOTALL)
+            html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
+            html = re.sub(r'<!--.*?-->', '', html, flags=re.IGNORECASE | re.DOTALL)
+            html = re.sub(r'<meta[^>]*>', '', html, flags=re.IGNORECASE)
+            
+            # Strip all attributes from opening tags to kill inline CSS (keeps <b>, <i>, <p>, etc.)
+            html = re.sub(r'<([a-zA-Z0-9]+)[^>]*>', r'<\1>', html)
+            
+            # Remove <span> and <div> tags entirely, but keep their contents
+            html = re.sub(r'</?span>', '', html, flags=re.IGNORECASE)
+            html = re.sub(r'</?div>', '', html, flags=re.IGNORECASE)
+            
+            self.insertHtml(html)
+        elif source.hasText():
+            self.insertPlainText(source.text())
+        else:
+            super().insertFromMimeData(source)
+
 class EditorPanel(QWidget):
     save_requested = pyqtSignal(dict)
     text_changed_live = pyqtSignal() # LIVE PREVIEW SIGNAL
+    dirty_state_changed = pyqtSignal(bool) # Tracks unsaved changes
+    karaoke_sync_requested = pyqtSignal() # Emitted when spacebar is pressed in sync mode
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.editors = {}
         self.counters = {}
         self.line_counters = {} # Naya dictionary lines count karne ke liye
+        self._is_dirty = False
         self.holy_names_enabled = True
         self.current_editing_block_id = None 
         self.init_ui()
@@ -39,6 +80,15 @@ class EditorPanel(QWidget):
             widget.setProperty("state", state)
         widget.style().unpolish(widget)
         widget.style().polish(widget)
+
+    def set_dirty(self, state: bool):
+        if self._is_dirty != state:
+            self._is_dirty = state
+            self.dirty_state_changed.emit(state)
+            if state and self.current_editing_block_id:
+                self.status_label.setText(f"Mode: EDITING Block #{self.current_editing_block_id} ✏️ (Unsaved)")
+            elif not state and self.current_editing_block_id:
+                self.status_label.setText(f"Mode: EDITING Block #{self.current_editing_block_id} ✏️")
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -167,14 +217,25 @@ class EditorPanel(QWidget):
         del_row_btn = QPushButton("🗑️ Delete Selected Row")
         del_row_btn.clicked.connect(self.delete_word_row)
         
+        export_vtt_btn = QPushButton("💾 Export Subtitles (.vtt / .srt)")
+        export_vtt_btn.clicked.connect(self.export_vtt_subtitles)
+        
         k_toolbar.addWidget(extract_btn)
         k_toolbar.addWidget(add_row_btn)
         k_toolbar.addWidget(del_row_btn)
+        k_toolbar.addWidget(export_vtt_btn)
+        
+        self.sync_mode_btn = QPushButton("🔴 Continuous Sync (Spacebar)")
+        self.sync_mode_btn.setCheckable(True)
+        self.sync_mode_btn.setObjectName("dangerBtn")
+        self.sync_mode_btn.setToolTip("Toggle to map audio timestamps rapidly using the Spacebar.")
+        k_toolbar.addWidget(self.sync_mode_btn)
         k_toolbar.addStretch()
         k_layout.addLayout(k_toolbar)
         
         # Karaoke Data Grid
-        self.words_table = QTableWidget(0, 6)
+        self.words_table = KaraokeTableWidget(0, 6)
+        self.words_table.space_pressed.connect(self.handle_space_sync)
         self.words_table.setHorizontalHeaderLabels(["Arabic (Ar)", "Urdu (Ur)", "Gujarati (Guj)", "English (En)", "Audio Start (s)", "Audio End (s)"])
         self.words_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.words_table.setAlternatingRowColors(True)
@@ -204,6 +265,10 @@ class EditorPanel(QWidget):
     def delete_word_row(self):
         current_row = self.words_table.currentRow()
         if current_row >= 0: self.words_table.removeRow(current_row)
+
+    def handle_space_sync(self):
+        if self.sync_mode_btn.isChecked():
+            self.karaoke_sync_requested.emit()
 
     def capture_audio_timestamp(self, time_sec):
         """Captures the clicked audio time and assigns it to the current Karaoke word."""
@@ -267,8 +332,13 @@ class EditorPanel(QWidget):
         harakat_btn = QPushButton("🔴 Color Harakat")
         harakat_btn.setToolTip("Colors all Arabic vowel marks red")
         harakat_btn.clicked.connect(self.color_harakat)
+        
+        tajweed_btn = QPushButton("🟢 Auto Tajweed")
+        tajweed_btn.setToolTip("Auto-color Tajweed rules (Qalqalah, Ghunnah, Ikhfaa) while typing")
+        tajweed_btn.setCheckable(True)
+        tajweed_btn.clicked.connect(self.toggle_tajweed)
 
-        for btn in [bold_btn, italic_btn, ul_btn, color_btn, harakat_btn]:
+        for btn in [bold_btn, italic_btn, ul_btn, color_btn, harakat_btn, tajweed_btn]:
             toolbar_layout.addWidget(btn)
             
         toolbar_layout.addStretch()
@@ -394,8 +464,16 @@ class EditorPanel(QWidget):
             
             font = QFont(field["font"], field["size"])
             font.setBold(True)
+            # Strict fallback chain for professional Arabic/Urdu shaping safety
+            if field["id"] == "ar": font.insertSubstitution(field["font"], "Arial")
+            elif field["id"] == "ur": font.insertSubstitution(field["font"], "Tahoma")
+            font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+            
             editor.setFont(font)
             self.update_widget_style(editor, state="normal")
+            
+            if field["id"] == "ar":
+                self.tajweed_highlighter = TajweedHighlighter(editor.document())
             
             editor.focus_in.connect(self.on_editor_focus_in)
             
@@ -491,6 +569,7 @@ class EditorPanel(QWidget):
         # Run Alignment Checker
         self.check_translation_alignment()
         
+        self.set_dirty(True)
         self.text_changed_live.emit()
 
     def toggle_focus_mode(self, checked):
@@ -520,6 +599,11 @@ class EditorPanel(QWidget):
                 
         editor.setTextCursor(original_cursor)
         editor.blockSignals(False)
+        
+    def toggle_tajweed(self, checked):
+        """Toggles the live Tajweed syntax highlighter for the Arabic editor."""
+        if hasattr(self, 'tajweed_highlighter'):
+            self.tajweed_highlighter.set_enabled(checked)
 
     def add_word_row(self, ar="", ur="", guj="", en="", start="", end=""):
         row = self.words_table.rowCount()
@@ -575,6 +659,7 @@ class EditorPanel(QWidget):
                 
         self.check_translation_alignment() # Run checker on load
         self.reset_stretches()
+        self.set_dirty(False)
 
     def clean_html(self, html_str):
         """Extracts inner HTML from PyQt's boilerplate document structure."""
@@ -641,6 +726,7 @@ class EditorPanel(QWidget):
         self.fn_en_input.clear()
         self.words_table.setRowCount(0)
         
+        self.set_dirty(False)
         self.text_changed_live.emit()
 
     def on_save_clicked(self):

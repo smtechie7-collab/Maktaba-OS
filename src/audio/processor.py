@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import shutil
+import subprocess
+import tempfile
 from pydub import AudioSegment
 from typing import List, Dict, Optional
 
@@ -98,19 +100,31 @@ class AudioProcessor:
                 logger.warning(f"File not found: {file_path}. Skipping.")
                 continue
 
-            current_audio = AudioSegment.from_file(file_path)
-
-            # Apply Trimming
-            start_ms = int(start_sec * 1000)
-            end_ms = int(end_sec * 1000) if end_sec else len(current_audio)
-            
-            # Sanity check bounds
-            start_ms = max(0, min(start_ms, len(current_audio)))
-            end_ms = max(start_ms, min(end_ms, len(current_audio)))
-
-            if start_ms > 0 or end_ms < len(current_audio):
-                logger.info(f"  -> Trimming '{track.get('name', 'track')}' from {start_ms}ms to {end_ms}ms")
-                current_audio = current_audio[start_ms:end_ms]
+            # Apply Trimming via FFmpeg subprocessing to avoid OOM on large files
+            if start_sec > 0 or end_sec is not None:
+                logger.info(f"  -> Slicing '{track.get('name', 'track')}' via FFmpeg from {start_sec}s to {end_sec if end_sec else 'end'}s")
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+                    temp_file_path = temp_audio.name
+                
+                cmd = [AudioSegment.converter, "-y", "-i", file_path]
+                if start_sec > 0:
+                    cmd.extend(["-ss", str(start_sec)])
+                if end_sec is not None:
+                    cmd.extend(["-to", str(end_sec)])
+                cmd.extend(["-c:a", "pcm_s16le", temp_file_path])
+                
+                try:
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    current_audio = AudioSegment.from_file(temp_file_path)
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"FFmpeg slicing failed for {file_path}: {e}")
+                    continue
+                finally:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+            else:
+                logger.info(f"  -> Loading full track '{track.get('name', 'track')}'")
+                current_audio = AudioSegment.from_file(file_path)
 
             if combined_audio is None:
                 combined_audio = current_audio

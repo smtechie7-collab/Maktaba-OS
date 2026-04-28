@@ -13,7 +13,7 @@ from src.utils.logger import setup_logger
 logger = setup_logger("Database")
 
 class DatabaseManager:
-    CURRENT_SCHEMA_VERSION = 4
+    CURRENT_SCHEMA_VERSION = 6
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = str(Path(db_path).expanduser().resolve()) if db_path else str(database_path())
@@ -56,6 +56,8 @@ class DatabaseManager:
             (2, "add_chapter_type", self._migration_002_add_chapter_type),
             (3, "add_block_sequence", self._migration_003_add_block_sequence),
             (4, "add_book_metadata_fields", self._migration_004_add_book_metadata_fields),
+            (5, "add_history_table", self._migration_005_add_history_table),
+            (6, "add_autosave_table", self._migration_006_add_autosave_table),
         ]
         current_version = self._schema_version(conn)
 
@@ -143,6 +145,47 @@ class DatabaseManager:
             conn.execute("ALTER TABLE Books ADD COLUMN category TEXT")
         if "notes" not in columns:
             conn.execute("ALTER TABLE Books ADD COLUMN notes TEXT")
+
+    def _migration_005_add_history_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Content_Blocks_History (
+                history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                block_id INTEGER,
+                version_id INTEGER,
+                content_data JSON,
+                is_active BOOLEAN,
+                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (block_id) REFERENCES Content_Blocks (id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS archive_block_history
+            AFTER UPDATE ON Content_Blocks
+            FOR EACH ROW
+            WHEN OLD.content_data != NEW.content_data OR OLD.is_active != NEW.is_active
+            BEGIN
+                INSERT INTO Content_Blocks_History (block_id, version_id, content_data, is_active)
+                VALUES (OLD.id, OLD.version, OLD.content_data, OLD.is_active);
+            END;
+        """)
+
+    def _migration_006_add_autosave_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Auto_Saves (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                block_id INTEGER,
+                content_data JSON NOT NULL,
+                saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(book_id, chapter_id, block_id)
+            )
+        """)
+        # Handle the NULL block_id case for new un-saved blocks using a partial index (SQLite 3.15+)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_autosave_new_block 
+            ON Auto_Saves(book_id, chapter_id) WHERE block_id IS NULL
+        """)
 
     def add_book(self, title: str, author: str = None, language: str = 'en', publisher: str = None, category: str = None, notes: str = None, metadata: Dict = None) -> int:
         with self._get_connection() as conn:
@@ -479,6 +522,47 @@ class DatabaseManager:
                     "INSERT INTO Footnotes (block_id, marker, content) VALUES (?, ?, ?)",
                     (block_id, fn.get("marker", "*"), json.dumps(fn.get("content", {})))
                 )
+
+    def save_draft(self, book_id: int, chapter_id: int, block_id: Optional[int], content_data: Dict[str, Any]) -> None:
+        """Saves a background draft of the current block to prevent data loss."""
+        with self._get_connection() as conn:
+            if block_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO Auto_Saves (book_id, chapter_id, block_id, content_data, saved_at) 
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(book_id, chapter_id, block_id) 
+                    DO UPDATE SET content_data = excluded.content_data, saved_at = CURRENT_TIMESTAMP
+                    """,
+                    (book_id, chapter_id, block_id, json.dumps(content_data))
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO Auto_Saves (book_id, chapter_id, block_id, content_data, saved_at) 
+                    VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(book_id, chapter_id) WHERE block_id IS NULL
+                    DO UPDATE SET content_data = excluded.content_data, saved_at = CURRENT_TIMESTAMP
+                    """,
+                    (book_id, chapter_id, json.dumps(content_data))
+                )
+
+    def get_draft(self, book_id: int, chapter_id: int, block_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        """Retrieves an unsaved background draft if it exists."""
+        with self._get_connection() as conn:
+            if block_id is not None:
+                row = conn.execute("SELECT content_data FROM Auto_Saves WHERE book_id = ? AND chapter_id = ? AND block_id = ?", (book_id, chapter_id, block_id)).fetchone()
+            else:
+                row = conn.execute("SELECT content_data FROM Auto_Saves WHERE book_id = ? AND chapter_id = ? AND block_id IS NULL", (book_id, chapter_id)).fetchone()
+            return json.loads(row["content_data"]) if row else None
+
+    def clear_draft(self, book_id: int, chapter_id: int, block_id: Optional[int]) -> None:
+        """Deletes a draft after a successful intentional save."""
+        with self._get_connection() as conn:
+            if block_id is not None:
+                conn.execute("DELETE FROM Auto_Saves WHERE book_id = ? AND chapter_id = ? AND block_id = ?", (book_id, chapter_id, block_id))
+            else:
+                conn.execute("DELETE FROM Auto_Saves WHERE book_id = ? AND chapter_id = ? AND block_id IS NULL", (book_id, chapter_id))
 
     def get_book_content(self, book_id: int) -> List[Dict[str, Any]]:
         """Fetch all chapters and content, optimized. LEFT JOIN ensures empty chapters (like Covers) are loaded too."""

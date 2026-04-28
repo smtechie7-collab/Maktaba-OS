@@ -19,6 +19,7 @@ except ImportError as exc:
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.core.config import load_config
 from src.data.database import DatabaseManager
+from src.utils.tajweed_parser import TajweedEngine
 
 class PDFGenerator:
     def __init__(self, template_dir=None, db_path=None):
@@ -55,19 +56,32 @@ class PDFGenerator:
                     "arabic": "Amiri", "arabic_size": 24,
                     "urdu": "Jameel Noori Nastaliq", "urdu_size": 20,
                     "gujarati": "Noto Sans Gujarati", "gujarati_size": 16
-                }
+                },
+                "enable_tajweed": True
             }
 
         # 1. Fetch metadata
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT title, author, metadata FROM Books WHERE id = ?", (book_id,))
+            cursor.execute("SELECT title, author, language, metadata FROM Books WHERE id = ?", (book_id,))
             book_info = cursor.fetchone()
             if not book_info: return
             
             book_metadata = {}
             if book_info['metadata']:
                 book_metadata = json.loads(book_info['metadata']) if isinstance(book_info['metadata'], str) else book_info['metadata']
+                
+            is_rtl = book_info['language'] in ['ar', 'ur']
+            
+            # 1.5 Calculate Advanced Print Geometry (Gutter & Blank Pages)
+            m = styles.get("margins", {})
+            page_geometry = {
+                "top": m.get("top", 20),
+                "bottom": m.get("bottom", 20),
+                "inside": m.get("left", 15) + m.get("gutter", 10), 
+                "outside": m.get("right", 15),
+                "chapter_break": "left" if is_rtl else "right"
+            }
 
         # 2. Fetch content optimized
         content_blocks = self.db.get_book_content(book_id)
@@ -88,9 +102,13 @@ class PDFGenerator:
                 chapters_data.append(current_chapter_dict)
             
             if block['block_id']:
+                content_data = json.loads(block['content_data'])
+                if styles.get("enable_tajweed") and content_data.get('ar'):
+                    content_data['ar'] = TajweedEngine.apply_html(content_data['ar'])
+                    
                 current_chapter_dict['blocks'].append({
                     "block_id": block['block_id'],
-                    "content_data": json.loads(block['content_data']),
+                    "content_data": content_data,
                     "content_type": block['content_type'],
                     "footnotes": block.get("footnotes", [])
                 })
@@ -116,6 +134,8 @@ class PDFGenerator:
             book_metadata=book_metadata,
             chapters=chapters_data,
             margins=styles.get("margins"),
+            page_geometry=page_geometry,
+            is_rtl=is_rtl,
             fonts=styles.get("fonts"),
             press_ready=press_ready # Pass press_ready flag to CSS
         )
