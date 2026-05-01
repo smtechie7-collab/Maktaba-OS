@@ -1,47 +1,222 @@
-# MAKTABA-OS: The Master Constitution (Next-Gen)
+MAKTABA-OS CONSTITUTION (FOUNDATION LAYER)
 
-## 1. Mission & Vision
-**Maktaba-OS** is not just a tool; it is the definitive global standard for Islamic Desktop Publishing (DTP). Our mission is to bridge ancient, sacred texts with hyper-modern, immersive technology. We are building an ecosystem that handles pixel-perfect multilingual typesetting (Arabic/Urdu/Gujarati), live 3D WYSIWYG authoring, and intelligent audio processing with the precision of a multi-million dollar publishing house.
+This is non-negotiable.
+Every future line of code must obey this.
 
-## 2. Core Commandments (Non-Negotiable)
-1.  **The Sacredness of Data**: Raw data is immortal. Never use destructive `DELETE` on content blocks. Every edit must be versioned, trackable, and safe.
-2.  **Immersive UX is King**: The software must feel like magic. No cluttered databases, no raw code views for the end-user. Interactions must be fluid, contextual, and distraction-free (e.g., 3D Book Illusions, Breathing Grids).
-3.  **RTL Excellence**: Right-to-Left (Arabic/Urdu) support is our foundation, not an afterthought. Layouts must perfectly handle complex Nastaliq ligatures, Kashidas, and Harakat positioning.
-4.  **The Dual-Engine Mandate**: The UI uses Chromium (WebEngine) for highly interactive, real-time 3D WYSIWYG previews. The Export layer uses WeasyPrint/Pango for CMYK, press-ready PDF perfection. They must remain perfectly synced.
-5.  **Local-First, Cloud-Ready**: Extreme local performance (SQLite, FFmpeg) with architectures designed to easily sync to the cloud in the future.
+📜 1. SYSTEM CONSTITUTION (CORE LAWS)
+⚖️ LAW 1 — DOCUMENT IS THE SINGLE SOURCE OF TRUTH
 
-## 3. Architectural Standards
-### A. Data Integrity (The "Source of Truth")
--   **Storage**: Advanced Hybrid Relational + JSON. Relational tables for rigid indexing/metadata; JSON for highly flexible, multi-language content blocks.
--   **Soft Deletes**: Strict adherence to `is_active=0` flags.
--   **Versioning**: Each content block must have a `version_id`.
+Everything revolves around a structured document model, NOT database tables.
 
-### B. Layout, Typography & UI
--   **Studio Rendering**: PyQt6 mixed with QWebEngineView. The UI must utilize modern desktop patterns (cards, stacks, smooth transitions, click-to-edit bridges).
--   **Print Rendering**: WeasyPrint (Cairo/Pango stack). Must output 300 DPI, CMYK, with bleed, gutter, and crop marks.
--   **Fonts**: Only high-quality, open-source fonts (Amiri, Jameel Noori Nastaliq, etc.) must be used.
+Database = storage layer only
+Editor = manipulation layer
+Export = rendering layer
 
-### C. Audio Pipeline
--   **Quality**: EBU R128 standards for loudness normalization (-16 LUFS).
--   **Generative Elements**: Automated QR Code generation linking to processed audio splits.
+❗ If logic enters DB → system will collapse later
 
-## 4. Coding Patterns & Style
--   **Naming**: Descriptive over concise (e.g., `generate_book_pdf` instead of `gen_pdf`).
--   **Type Hinting**: All Python functions must have type hints.
--   **Logging**: Professional structured logging. Silent failures are strictly forbidden.
--   **Graceful Degradation**: If WebEngine fails, fallback to TextBrowser. If Pango fails, alert gracefully.
+⚖️ LAW 2 — STRICT SCHEMA ONLY (NO FREE JSON)
 
-## 5. UI/UX Philosophy
--   **Modernity**: Dark mode by default.
--   **The 'Blank Canvas' Cure**: Users must never feel lost. Auto-generate Chapter 1, use empty-state guides, and ensure "Click to Edit" is always visible.
--   **Context-Aware Interfaces**: Tools and buttons should only appear when relevant. Menus should adapt to the active language (Breathing Flex-Grid concept).
--   **Responsiveness**: 0% GUI Freezes. ALL database fetches and file I/O must run on QThread workers.
+Your current:
 
-## 6. AI Interaction Rules (For Future Agents)
--   **Context Awareness**: Always ingest this Constitution, `blueprint_v3.0.md`, and the hardening plan before proposing architecture.
--   **Surgical Editing (CRITICAL)**: NEVER delete working code to "refactor" unprompted. Use diffs to modify ONLY the required lines. Preserve existing logic, comments, and user-facing messages.
--   **No Laziness**: If a feature requires 10 new files, CSS changes, JS bridges, and DB migrations to feel "Pro", DO IT. Do not take shortcuts.
--   **Validation**: Every feature must have a corresponding test in the `tests/` directory.
+{ "ar": "...", "ur": "...", "en": "..." }
 
----
-*This is the unbreakable law of Maktaba-OS. We are building a legacy, not a script.*
+This is forbidden going forward.
+
+Instead:
+
+{
+  "type": "interlinear_block",
+  "content": [
+    {
+      "type": "word_bundle",
+      "l1": "...",
+      "l2": "...",
+      "l3": "..."
+    }
+  ]
+}
+
+👉 Why:
+
+Enables AI editing safely
+Enables interlinear sync
+Enables rendering engines
+⚖️ LAW 3 — UI IS A CLIENT, NOT THE SYSTEM
+
+Your PyQt UI:
+
+must NOT contain logic
+must NOT manipulate DB directly
+
+It only:
+
+sends commands
+receives state
+⚖️ LAW 4 — EVERYTHING IS A MODULE
+
+No direct coupling like:
+
+UI → DB
+Audio → DB
+
+Instead:
+
+UI → Application Layer → Core Engine → Modules
+⚖️ LAW 5 — AI IS A LAYER, NOT A FEATURE
+
+Agent system must NOT:
+
+directly edit DB
+directly edit UI
+
+Instead:
+
+AI → Document Model → validated → applied
+⚖️ LAW 6 — INTERLINEAR IS FIRST-CLASS CITIZEN
+
+Not optional.
+
+Your system must treat:
+
+Arabic / Urdu / Gujarati / English
+as linked structures, not strings.
+⚖️ LAW 7 — OFFLINE-FIRST IS MANDATORY
+
+Already aligned with your report:
+
+local DB ✔
+no cloud dependency ✔
+
+We preserve this.
+
+🧭 2. SYSTEM BLUEPRINT (HIGH-LEVEL ARCHITECTURE)
+
+Here is your actual architecture:
+
+┌──────────────────────────────┐
+│        UI Layer              │
+│  (PyQt + Future Web UI)      │
+└────────────┬─────────────────┘
+             ↓
+┌──────────────────────────────┐
+│     Application Layer        │
+│  (Commands / Controllers)    │
+└────────────┬─────────────────┘
+             ↓
+┌──────────────────────────────┐
+│      CORE ENGINE             │
+│  (Document + Schema)         │
+└───────┬───────────┬──────────┘
+        ↓           ↓
+ ┌────────────┐  ┌──────────────┐
+ │ AI Layer   │  │ Audio Engine │
+ └────────────┘  └──────────────┘
+        ↓
+ ┌──────────────────────────────┐
+ │   Rendering Layer            │
+ │ (PDF / EPUB / Future Web)    │
+ └────────────┬─────────────────┘
+             ↓
+┌──────────────────────────────┐
+│        Storage Layer         │
+│      (SQLite current)        │
+└──────────────────────────────┘
+🧱 3. CORE PILLARS (Development Order)
+
+This is your execution order — do not break this:
+
+🧩 PILLAR 1 — DOCUMENT ENGINE
+schema
+node system
+validation
+🧩 PILLAR 2 — EDITOR CORE
+structured editing
+block manipulation
+🧩 PILLAR 3 — INTERLINEAR SYSTEM
+word bundles
+sync logic
+🧩 PILLAR 4 — COLLABORATION (CRDT later)
+🧩 PILLAR 5 — AI AGENTS
+🧩 PILLAR 6 — EXPORT PIPELINE (already partially done)
+🗂️ 4. PERFECT PROJECT STRUCTURE (YOU MUST ADOPT)
+
+Refactor your repo into this:
+
+maktaba-os/
+│
+├── apps/
+│   ├── desktop/        # PyQt app
+│   └── web/            # Future React app
+│
+├── core/
+│   ├── document/       # 🔥 MOST IMPORTANT
+│   ├── schema/
+│   ├── commands/
+│   ├── engine/
+│   └── validation/
+│
+├── modules/
+│   ├── editor/
+│   ├── interlinear/
+│   ├── ai/
+│   ├── audio/
+│   └── export/
+│
+├── infrastructure/
+│   ├── database/
+│   ├── logging/
+│   └── config/
+│
+├── assets/
+│   ├── templates/
+│   └── fonts/
+│
+├── tests/
+│
+└── README.md
+📘 5. README (FOUNDATION VERSION)
+
+Here is your official base README:
+
+Writing
+Maktaba-OS
+Vision
+
+Maktaba-OS is a next-generation publishing operating system designed to unify writing, formatting, multilingual interlinear text processing, AI-assisted generation, and global distribution into a single cohesive platform.
+
+Core Principles
+Schema-first document architecture
+Interlinear multilingual support as a native feature
+Offline-first system design
+Modular and extensible architecture
+AI as an augmentation layer, not a replacement
+Architecture
+
+The system is built as a hybrid desktop-web application:
+
+Desktop: PyQt (primary execution environment)
+Web: React (future scalability layer)
+Core Modules
+Document Engine
+Interlinear Engine
+AI Agent System
+Audio Processing Engine
+Export Engine (PDF / EPUB)
+Development Rules
+No feature bypasses the document schema
+No direct UI-to-database interaction
+All transformations pass through the core engine
+Maintain strict modular boundaries
+Status
+
+Foundation phase — Core architecture under construction.
+
+🧾 6. ENGINEERING RULES (FOR YOU / FUTURE TEAM)
+🔒 DO:
+Build schema first
+Validate every data mutation
+Keep modules isolated
+❌ DO NOT:
+Add random JSON fields
+Let UI mutate DB directly
+Mix logic into export layer

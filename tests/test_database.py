@@ -1,63 +1,110 @@
 import pytest
-import json
+from pathlib import Path
 
-def test_schema_migrations(temp_db):
-    """Ensure the database initializes with the latest schema version."""
-    with temp_db._get_connection() as conn:
-        version = temp_db._schema_version(conn)
-        assert version == 6  # Current Schema Version
+from infrastructure.database.manager import DatabaseManager
+from core.schema.document import (
+    DocumentRoot,
+    ChapterNode,
+    ParagraphNode,
+    InterlinearBlock,
+    InterlinearToken
+)
 
-def test_book_crud(temp_db):
-    """Test creating, reading, updating, and deleting a book."""
-    book_id = temp_db.add_book(title="Riyad as-Salihin", author="Imam an-Nawawi", language="ar")
+@pytest.fixture
+def temp_db(tmp_path: Path) -> DatabaseManager:
+    """Provides a fresh DatabaseManager instance using a temporary file."""
+    db_path = tmp_path / "test_maktaba.db"
+    return DatabaseManager(db_path)
+
+def test_book_creation_and_listing(temp_db: DatabaseManager):
+    """Test that creating a book creates metadata and an empty DocumentRoot."""
+    book_id = temp_db.create_book(title="Test Book", author="Test Author")
     assert book_id is not None
     
-    book = temp_db.get_book(book_id)
-    assert book["title"] == "Riyad as-Salihin"
-    assert book["author"] == "Imam an-Nawawi"
+    books = temp_db.list_books()
+    assert len(books) == 1
+    assert books[0]["title"] == "Test Book"
+    assert books[0]["author"] == "Test Author"
     
-    temp_db.update_book(book_id, title="Riyad as-Salihin (Updated)", author="Imam an-Nawawi")
-    updated_book = temp_db.get_book(book_id)
-    assert updated_book["title"] == "Riyad as-Salihin (Updated)"
+    # Ensure the new book was initialized with a valid, empty DocumentRoot
+    empty_doc = temp_db.load_document(book_id)
+    assert isinstance(empty_doc, DocumentRoot)
+    assert len(empty_doc.children) == 0
+
+def test_save_and_load_strict_document(temp_db: DatabaseManager):
+    """
+    Test that the database can successfully store and retrieve a 
+    deeply nested, strongly-typed Pydantic document model.
+    """
+    book_id = temp_db.create_book("Pydantic Test Book")
+    
+    # 1. Build a strict schema document
+    doc = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="Chapter 1",
+                children=[
+                    ParagraphNode(text="This is a standard paragraph node."),
+                    InterlinearBlock(
+                        tokens=[
+                            InterlinearToken(
+                                source_l1="بِسْمِ",
+                                transliteration_l2="bismi",
+                                translation_l3="In the name"
+                            )
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+    
+    # 2. Save the document
+    assert temp_db.save_document(book_id, doc) is True
+    
+    # 3. Load and verify types and data integrity
+    loaded_doc = temp_db.load_document(book_id)
+    assert loaded_doc is not None
+    assert len(loaded_doc.children) == 1
+    
+    chapter = loaded_doc.children[0]
+    assert isinstance(chapter, ChapterNode)
+    assert chapter.title == "Chapter 1"
+    assert len(chapter.children) == 2
+    
+    interlinear_block = chapter.children[1]
+    assert isinstance(interlinear_block, InterlinearBlock)
+    assert interlinear_block.tokens[0].source_l1 == "بِسْمِ"
+
+def test_save_document_increments_version(temp_db: DatabaseManager):
+    """Saving a document should advance the persisted document version."""
+    book_id = temp_db.create_book("Versioned Book")
+    original_version = temp_db.get_document_version(book_id)
+
+    doc = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="Chapter 1",
+                children=[ParagraphNode(text="Versioned text")],
+            )
+        ]
+    )
+
+    assert temp_db.save_document(book_id, doc) is True
+    assert temp_db.get_document_version(book_id) == original_version + 1
+
+def test_save_document_returns_false_for_missing_book(temp_db: DatabaseManager):
+    """Saving to a missing book id must report failure instead of silently succeeding."""
+    doc = DocumentRoot(children=[])
+
+    assert temp_db.save_document(99999, doc) is False
+    assert temp_db.get_document_version(99999) is None
+
+def test_delete_book(temp_db: DatabaseManager):
+    """Verify deleting a book removes it and prevents its document from being loaded."""
+    book_id = temp_db.create_book("To Be Deleted")
+    assert len(temp_db.list_books()) == 1
     
     temp_db.delete_book(book_id)
-    assert temp_db.get_book(book_id) is None
-
-def test_soft_delete_and_history_triggers(temp_db):
-    """Verify the 'Sacredness of Data' commandments: updates trigger history, deletes are soft."""
-    book_id = temp_db.add_book("Audit Log Test")
-    chapter_id = temp_db.add_chapter(book_id, "Chapter 1", 1)
-    
-    block_id = temp_db.add_content_block(chapter_id, {"ar": "Original Content"})
-    
-    # Update to trigger the SQLite History AFTER UPDATE trigger
-    temp_db.update_content_block(block_id, {"ar": "Modified Content"})
-    
-    with temp_db._get_connection() as conn:
-        # 1. Verify history was archived
-        history = conn.execute("SELECT content_data FROM Content_Blocks_History WHERE block_id = ?", (block_id,)).fetchall()
-        assert len(history) == 1
-        archived_data = json.loads(history[0]["content_data"])
-        assert archived_data["ar"] == "Original Content"
-        
-        # 2. Verify soft delete works
-        temp_db.soft_delete_content_block(block_id)
-        block = conn.execute("SELECT is_active FROM Content_Blocks WHERE id = ?", (block_id,)).fetchone()
-        assert block["is_active"] == 0
-
-def test_autosave_draft_system(temp_db):
-    """Test that background drafts are safely persisted and cleared upon intentional save."""
-    book_id = temp_db.add_book("Draft Test")
-    chapter_id = temp_db.add_chapter(book_id, "Draft Chapter", 1)
-    block_id = temp_db.add_content_block(chapter_id, {"ar": "Saved Block"})
-    
-    draft_data = {"ar": "Unsaved edits... user computer crashes now!"}
-    temp_db.save_draft(book_id, chapter_id, block_id, draft_data)
-    
-    # Recover Draft
-    recovered = temp_db.get_draft(book_id, chapter_id, block_id)
-    assert recovered is not None
-    assert recovered["ar"] == draft_data["ar"]
-    
-    temp_db.clear_draft(book_id, chapter_id, block_id)
-    assert temp_db.get_draft(book_id, chapter_id, block_id) is None
+    assert len(temp_db.list_books()) == 0
+    assert temp_db.load_document(book_id) is None

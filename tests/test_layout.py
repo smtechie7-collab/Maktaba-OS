@@ -1,32 +1,108 @@
-import pytest
-from src.layout.pdf_generator import PDFGenerator
-import os
+from core.schema.document import (
+    ChapterNode,
+    DocumentRoot,
+    InterlinearBlock,
+    InterlinearToken,
+    MultilingualBlock,
+    ParagraphNode,
+)
+from modules.export import PDFGenerator
 
-def test_template_rendering(test_db):
-    """Verify that Jinja2 renders the HTML correctly."""
-    # Setup test data
-    book_id = test_db.add_book("Layout Test", "Author")
-    chap_id = test_db.add_chapter(book_id, "Chapter 1", 1)
-    test_db.add_content_block(chap_id, {"ar": "بسم الله", "ur": "اللہ کے نام سے"})
 
-    # Initialize Generator (pointing to real templates)
-    gen = PDFGenerator(template_dir="src/layout/templates")
-    
-    # We'll check if the render process works without error
-    # For unit testing, we can check the rendered HTML string if we modify the generator slightly,
-    # but for now, we'll verify the data structure it uses.
-    
-    with test_db._get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT title, author FROM Books WHERE id = ?", (book_id,))
-        book_info = cursor.fetchone()
-        assert book_info['title'] == "Layout Test"
-        
-        # Test content grouping logic (replicating generator logic)
-        chapters_data = []
-        cursor.execute("SELECT id, title FROM Chapters WHERE book_id = ? ORDER BY sequence_number", (book_id,))
-        chapters = cursor.fetchall()
-        for chap in chapters:
-            cursor.execute("SELECT content_data FROM Content_Blocks WHERE chapter_id = ? AND is_active = 1", (chap['id'],))
-            blocks = cursor.fetchall()
-            assert len(blocks) == 1
+def test_layout_document_model_supports_multilingual_blocks():
+    """Verify migrated layout data is available from the document model."""
+    document = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="Chapter 1",
+                children=[
+                    MultilingualBlock(
+                        block_type="paragraph",
+                        ar="بسم الله",
+                        ur="اللہ کے نام سے",
+                    )
+                ],
+            )
+        ]
+    )
+
+    assert document.children[0].title == "Chapter 1"
+    assert document.children[0].children[0].ar == "بسم الله"
+
+
+def test_pdf_generator_initialization():
+    gen = PDFGenerator(template_dir="assets/templates")
+    assert gen.template_dir.as_posix().endswith("assets/templates")
+
+
+def test_render_document_html_includes_multilingual_content():
+    document = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="Opening",
+                children=[
+                    MultilingualBlock(
+                        block_type="paragraph",
+                        ar="بسم الله",
+                        ur="اللہ کے نام سے",
+                        gu="અલ્લાહના નામે",
+                        en="In the name of Allah",
+                    )
+                ],
+            )
+        ]
+    )
+
+    html = PDFGenerator().render_document_html(document, title="Sample")
+
+    assert "<title>Sample</title>" in html
+    assert 'class="lang lang-ar rtl"' in html
+    assert "بسم الله" in html
+    assert "اللہ کے نام سے" in html
+    assert "અલ્લાહના નામે" in html
+    assert "In the name of Allah" in html
+
+
+def test_render_document_html_escapes_text():
+    document = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="<Opening>",
+                children=[ParagraphNode(text="<unsafe>")],
+            )
+        ]
+    )
+
+    html = PDFGenerator().render_document_html(document, title="<Book>")
+
+    assert "<title>&lt;Book&gt;</title>" in html
+    assert "<h1>&lt;Opening&gt;</h1>" in html
+    assert "<p>&lt;unsafe&gt;</p>" in html
+
+
+def test_render_document_html_includes_interlinear_tokens():
+    document = DocumentRoot(
+        children=[
+            ChapterNode(
+                title="Interlinear",
+                children=[
+                    InterlinearBlock(
+                        tokens=[
+                            InterlinearToken(
+                                source_l1="بسم",
+                                transliteration_l2="bsm",
+                                translation_l3="In",
+                            )
+                        ]
+                    )
+                ],
+            )
+        ]
+    )
+
+    html = PDFGenerator().render_document_html(document)
+
+    assert 'class="interlinear"' in html
+    assert '<bdi class="token-source">بسم</bdi>' in html
+    assert "bsm" in html
+    assert "In" in html
