@@ -3,6 +3,9 @@ Main window for Maktaba-OS desktop application.
 Implements the tri-mode interface using QStackedWidget.
 """
 
+import asyncio
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -21,10 +24,15 @@ from core.commands.command_bus import CommandBus
 from core.commands.command_history import CommandHistory
 from core.commands.commands import ReplaceDocumentCommand, CreateBookCommand
 
+from modules.ai import create_voice_synthesis_agent
+from modules.ai import create_content_intelligence_agent
 from .write_mode import WriteModeWidget
 from modules.interlinear import InterlinearWidget
 from .sync_mode import SyncModeWidget
 from .publish_mode import PublishModeWidget
+
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -39,6 +47,8 @@ class MainWindow(QMainWindow):
         self.command_bus.start()
         self.command_history = CommandHistory()
         self.current_book_id: Optional[int] = None
+        self.voice_agent = self._initialize_voice_agent()
+        self.content_agent = self._initialize_content_agent()
 
         self.init_ui()
         self.setup_menus()
@@ -58,19 +68,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.stacked_widget)
 
         # Create mode widgets
-        self.write_mode = WriteModeWidget(self.command_bus)
+        self.write_mode = WriteModeWidget(self.command_bus, voice_agent=self.voice_agent, content_agent=self.content_agent)
         self.write_mode.command_runner = self.execute_write_command
         self.write_mode.setStyleSheet("background-color: #f8f9fa;")
 
         self.sync_mode = SyncModeWidget(self.command_bus)
         self.sync_mode.setStyleSheet("background-color: #e0e0e0;")
 
-        self.publish_mode = QWidget()
-        self.publish_mode.setStyleSheet("background-color: #d0d0d0;")
-        publish_label = QLabel("Publish Mode - Coming Soon")
-        publish_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        publish_layout = QVBoxLayout(self.publish_mode)
-        publish_layout.addWidget(publish_label)
         self.publish_mode = PublishModeWidget(self.command_bus)
         self.publish_mode.setStyleSheet("background-color: #f5f6fa;")
 
@@ -143,6 +147,60 @@ class MainWindow(QMainWindow):
         publish_mode_action.setShortcut('Ctrl+3')
         publish_mode_action.triggered.connect(lambda: self.stacked_widget.setCurrentIndex(2))
         view_menu.addAction(publish_mode_action)
+
+        # AI menu
+        ai_menu = menubar.addMenu('&AI')
+        
+        footnote_action = QAction('&Add Footnote', self)
+        footnote_action.setShortcut('Ctrl+F')
+        footnote_action.triggered.connect(self.add_footnote)
+        footnote_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(footnote_action)
+
+        citation_action = QAction('&Add Citation', self)
+        citation_action.setShortcut('Ctrl+Shift+C')
+        citation_action.triggered.connect(self.add_citation)
+        citation_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(citation_action)
+
+        outline_action = QAction('&Generate Outline', self)
+        outline_action.setShortcut('Ctrl+O')
+        outline_action.triggered.connect(self.generate_outline)
+        outline_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(outline_action)
+
+        expand_action = QAction('&Expand Content', self)
+        expand_action.setShortcut('Ctrl+E')
+        expand_action.triggered.connect(self.expand_content)
+        expand_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(expand_action)
+
+        summarize_action = QAction('&Summarize Content', self)
+        summarize_action.setShortcut('Ctrl+Shift+S')
+        summarize_action.triggered.connect(self.summarize_content)
+        summarize_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(summarize_action)
+
+        collaborate_action = QAction('&Collaborate', self)
+        collaborate_action.setShortcut('Ctrl+L')
+        collaborate_action.triggered.connect(self.collaborate)
+        collaborate_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(collaborate_action)
+
+        brainstorm_action = QAction('&Brainstorm', self)
+        brainstorm_action.setShortcut('Ctrl+B')
+        brainstorm_action.triggered.connect(self.brainstorm)
+        brainstorm_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(brainstorm_action)
+
+        rewrite_action = QAction('&Rewrite Content', self)
+        rewrite_action.setShortcut('Ctrl+R')
+        rewrite_action.triggered.connect(self.rewrite_content)
+        rewrite_action.setEnabled(False)  # Initially disabled until book is loaded
+        ai_menu.addAction(rewrite_action)
+
+        # Store AI actions for enabling/disabling
+        self.ai_actions = [footnote_action, citation_action, outline_action, expand_action, summarize_action, collaborate_action, brainstorm_action, rewrite_action]
 
     def setup_status_bar(self):
         """Setup the status bar."""
@@ -220,6 +278,7 @@ class MainWindow(QMainWindow):
         self.reload_current_book()
         self.update_undo_redo_state()
         self.update_book_status()
+        self.update_ai_actions_state()
         QMessageBox.information(self, "New Book", f"Created new book '{title.strip()}' with ID {book_id}.")
 
     def open_book(self):
@@ -275,6 +334,7 @@ class MainWindow(QMainWindow):
         self.publish_mode.load_book(book_id)
         self.update_undo_redo_state()
         self.update_book_status()
+        self.update_ai_actions_state()
 
     def save_book(self):
         """Save the current document back to the database."""
@@ -367,6 +427,122 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.command_bus.stop()
         super().closeEvent(event)
+
+    def _initialize_voice_agent(self):
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OPENAI_API_KEY not found; voice synthesis disabled.")
+            return None
+
+        try:
+            agent = create_voice_synthesis_agent(api_key=api_key)
+            asyncio.run(agent.initialize())
+            logger.info("Voice synthesis agent initialized successfully")
+            return agent
+        except Exception as exc:
+            logger.warning(f"Voice synthesis agent initialization failed: {exc}")
+            return None
+
+    def _initialize_content_agent(self):
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OPENAI_API_KEY not found; AI content features disabled.")
+            return None
+
+        try:
+            agent = create_content_intelligence_agent(api_key=api_key)
+            asyncio.run(agent.initialize())
+            logger.info("Content intelligence agent initialized successfully")
+            return agent
+        except Exception as exc:
+            logger.warning(f"Content intelligence agent initialization failed: {exc}")
+            return None
+
+    def add_footnote(self):
+        """Add a footnote using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.add_ai_footnote()
+
+    def add_citation(self):
+        """Add a citation using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.add_ai_citation()
+
+    def generate_outline(self):
+        """Generate an outline using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.generate_ai_outline()
+
+    def expand_content(self):
+        """Expand content using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.expand_ai_content()
+
+    def summarize_content(self):
+        """Summarize content using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.summarize_ai_content()
+
+    def collaborate(self):
+        """Start collaborative writing session."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.ai_collaborate()
+
+    def brainstorm(self):
+        """Start brainstorming session."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.ai_brainstorm()
+
+    def rewrite_content(self):
+        """Rewrite content in a different style."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+        self.write_mode.rewrite_ai_content()
+
+    def update_ai_actions_state(self):
+        """Enable/disable AI actions based on book state."""
+        enabled = self.current_book_id is not None and self.content_agent is not None
+        for action in getattr(self, 'ai_actions', []):
+            action.setEnabled(enabled)
 
 
 def main():

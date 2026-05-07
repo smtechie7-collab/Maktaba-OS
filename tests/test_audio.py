@@ -2,6 +2,7 @@ import json
 import subprocess
 
 from modules.audio import AudioProcessor
+from modules.audio.waveform import WaveformHtmlBuilder
 
 
 def test_audio_processor_initialization():
@@ -113,3 +114,19 @@ def test_normalize_audio_requires_ffmpeg(tmp_path, monkeypatch):
         assert "ffmpeg" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError")
+
+
+def test_waveform_html_builder_embeds_local_wavesurfer_asset():
+    html = WaveformHtmlBuilder().build("file:///C:/audio/sample.mp3")
+
+    assert "assets/vendor/wavesurfer.min.js" in html
+    assert "WaveSurfer.create" in html
+    assert "file:///C:/audio/sample.mp3" in html
+
+
+def test_waveform_html_builder_has_offline_fallback():
+    html = WaveformHtmlBuilder("vendor/wavesurfer.js").build()
+
+    assert "drawFallback" in html
+    assert "WaveSurfer asset missing" in html
+    assert "Load audio to activate waveform" in html

@@ -3,11 +3,17 @@ Write Mode widget for Maktaba-OS authoring interface.
 Implements vertically stacked multilingual editing.
 """
 
+import asyncio
+import base64
+import tempfile
+
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PyQt6.QtCore import QMimeData, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDrag, QFont, QTextCharFormat, QTextCursor
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -29,6 +35,7 @@ from core.commands.commands import (
     ReplaceDocumentCommand,
     ReplaceTextCommand,
 )
+from modules.ai.agent import AgentContext
 
 
 class LanguageField(QFrame):
@@ -261,9 +268,11 @@ class ContentBlock(QFrame):
 class WriteModeWidget(QWidget):
     """Main widget for Write Mode authoring."""
 
-    def __init__(self, command_bus: CommandBus, parent=None):
+    def __init__(self, command_bus: CommandBus, voice_agent: Optional[Any] = None, content_agent: Optional[Any] = None, parent=None):
         super().__init__(parent)
         self.command_bus = command_bus
+        self.voice_agent = voice_agent
+        self.content_agent = content_agent
         self.command_runner: Optional[Callable] = None
         self.current_book_id: Optional[int] = None
         self.blocks: list[ContentBlock] = []
@@ -319,6 +328,26 @@ class WriteModeWidget(QWidget):
         self.add_footnote_btn = QPushButton("Add Footnote")
         self.add_footnote_btn.clicked.connect(self.add_footnote_block)
         toolbar_layout.addWidget(self.add_footnote_btn)
+
+        self.voice_btn = QPushButton("Generate Voice")
+        self.voice_btn.clicked.connect(self.generate_voice)
+        toolbar_layout.addWidget(self.voice_btn)
+
+        self.ai_footnote_btn = QPushButton("AI Footnote")
+        self.ai_footnote_btn.clicked.connect(self.add_ai_footnote)
+        toolbar_layout.addWidget(self.ai_footnote_btn)
+
+        self.ai_citation_btn = QPushButton("AI Citation")
+        self.ai_citation_btn.clicked.connect(self.add_ai_citation)
+        toolbar_layout.addWidget(self.ai_citation_btn)
+
+        self.ai_collaborate_btn = QPushButton("Collaborate")
+        self.ai_collaborate_btn.clicked.connect(self.ai_collaborate)
+        toolbar_layout.addWidget(self.ai_collaborate_btn)
+
+        self.ai_brainstorm_btn = QPushButton("Brainstorm")
+        self.ai_brainstorm_btn.clicked.connect(self.ai_brainstorm)
+        toolbar_layout.addWidget(self.ai_brainstorm_btn)
 
         toolbar_layout.addStretch()
 
@@ -478,12 +507,527 @@ class WriteModeWidget(QWidget):
                 return result.data.get("replacements", 0)
             return 0
 
-        # LAW 3 WARNING: Fallback mutates UI state without CommandBus. 
+        # LAW 3 WARNING: Fallback mutates UI state without CommandBus.
         # Acceptable only during initialization/loading phases.
         replaced = sum(block.replace_text(query, replacement) for block in self.blocks)
         if replaced:
             self.on_content_changed()
         return replaced
+
+    def generate_voice(self):
+        if self.voice_agent is None:
+            QMessageBox.warning(self, "Voice Synthesis", "Voice synthesis is not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "Voice Synthesis", "Please open or create a book first.")
+            return
+
+        language_options = ["English", "Arabic", "Urdu", "Gujarati"]
+        language_name, ok = QInputDialog.getItem(
+            self,
+            "Voice Language",
+            "Choose a language to synthesize:",
+            language_options,
+            0,
+            False,
+        )
+        if not ok or not language_name:
+            return
+
+        language_codes = {
+            "English": ("en", "en-US"),
+            "Arabic": ("ar", "ar-AE"),
+            "Urdu": ("ur", "ur-PK"),
+            "Gujarati": ("gu", "gu-IN"),
+        }
+
+        text_key, voice_lang = language_codes.get(language_name, ("en", "en-US"))
+        text = self._collect_language_text(text_key)
+        if not text.strip():
+            QMessageBox.warning(self, "Voice Synthesis", f"No {language_name} text available to synthesize.")
+            return
+
+        try:
+            response = asyncio.run(self.voice_agent.process(
+                {
+                    "task_type": "synthesize",
+                    "content": text,
+                    "language": voice_lang,
+                    "voice": "alloy",
+                    "format": "wav",
+                },
+                AgentContext(language=text_key),
+            ))
+        except Exception as exc:
+            QMessageBox.critical(self, "Voice Synthesis Error", str(exc))
+            return
+
+        if response.error_message:
+            QMessageBox.critical(self, "Voice Synthesis Error", response.error_message)
+            return
+
+        audio_base64 = response.metadata.get("audio_base64")
+        if not audio_base64:
+            QMessageBox.warning(self, "Voice Synthesis", "Voice synthesis returned no audio payload.")
+            return
+
+        audio_bytes = base64.b64decode(audio_base64)
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        temp_file.write(audio_bytes)
+        temp_file.close()
+
+        self._play_audio_file(temp_file.name)
+        QMessageBox.information(self, "Voice Synthesis", f"Playing synthesized {language_name} audio.")
+
+    def add_ai_footnote(self):
+        """Add a footnote using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        # Get context from current content
+        context_text = self._collect_language_text("en")  # Use English as primary context
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Footnote", "Please add some content before requesting a footnote.")
+            return
+
+        topic, ok = QInputDialog.getText(self, "AI Footnote", "What topic should the footnote address?")
+        if not ok or not topic.strip():
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "footnote",
+                    "content": context_text,
+                    "topic": topic.strip(),
+                    "language": "en",
+                    "style": "academic"
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Footnote Error", response.error_message)
+                return
+
+            footnote_text = response.content.strip()
+            if footnote_text:
+                self.add_footnote_block_with_content({"en": footnote_text})
+                QMessageBox.information(self, "AI Footnote", "Footnote added successfully!")
+            else:
+                QMessageBox.warning(self, "AI Footnote", "No footnote content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Footnote Error", str(exc))
+
+    def add_ai_citation(self):
+        """Add a citation using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        # Get context from current content
+        context_text = self._collect_language_text("en")
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Citation", "Please add some content before requesting a citation.")
+            return
+
+        source_type, ok = QInputDialog.getItem(
+            self, "AI Citation", "What type of source?",
+            ["book", "article", "website", "report", "other"], 0, False
+        )
+        if not ok:
+            return
+
+        topic, ok = QInputDialog.getText(self, "AI Citation", "What should be cited?")
+        if not ok or not topic.strip():
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "citation",
+                    "content": context_text,
+                    "topic": topic.strip(),
+                    "source_type": source_type,
+                    "language": "en",
+                    "style": "academic"
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Citation Error", response.error_message)
+                return
+
+            citation_text = response.content.strip()
+            if citation_text:
+                self.add_footnote_block_with_content({"en": citation_text})
+                QMessageBox.information(self, "AI Citation", "Citation added successfully!")
+            else:
+                QMessageBox.warning(self, "AI Citation", "No citation content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Citation Error", str(exc))
+
+    def generate_ai_outline(self):
+        """Generate an outline using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        topic, ok = QInputDialog.getText(self, "AI Outline Generator", "What topic would you like to create an outline for?")
+        if not ok or not topic.strip():
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "outline",
+                    "topic": topic.strip(),
+                    "language": "en",
+                    "style": "academic"
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Outline Error", response.error_message)
+                return
+
+            outline_text = response.content.strip()
+            if outline_text:
+                # Create a dialog to display the outline
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle("Generated Outline")
+                dialog.setText(outline_text)
+                dialog.setIcon(QMessageBox.Icon.Information)
+                dialog.setTextInteractionFlags(dialog.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse)
+                
+                # Add buttons
+                dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                dialog.button(QMessageBox.StandardButton.Ok).setText("Insert Outline")
+                dialog.button(QMessageBox.StandardButton.Cancel).setText("Close")
+                
+                if dialog.exec() == QMessageBox.StandardButton.Ok:
+                    # Insert outline into document as a comment or separate section
+                    self.add_footnote_block_with_content({"en": outline_text})
+                    QMessageBox.information(self, "AI Outline", "Outline inserted successfully!")
+            else:
+                QMessageBox.warning(self, "AI Outline", "No outline content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Outline Error", str(exc))
+
+    def expand_ai_content(self):
+        """Expand content using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        # Get context from current content
+        context_text = self._collect_language_text("en")
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Expand", "Please add some content to expand.")
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "expand",
+                    "content": context_text,
+                    "language": "en",
+                    "style": "academic"
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Expand Error", response.error_message)
+                return
+
+            expanded_text = response.content.strip()
+            if expanded_text:
+                # Create a dialog to display the expanded content
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle("Expanded Content")
+                dialog.setText(expanded_text)
+                dialog.setIcon(QMessageBox.Icon.Information)
+                dialog.setTextInteractionFlags(dialog.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse)
+                
+                # Add buttons
+                dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                dialog.button(QMessageBox.StandardButton.Ok).setText("Replace Content")
+                dialog.button(QMessageBox.StandardButton.Cancel).setText("Close")
+                
+                if dialog.exec() == QMessageBox.StandardButton.Ok:
+                    # Replace the current content with expanded version
+                    self._replace_language_text("en", expanded_text)
+                    QMessageBox.information(self, "AI Expand", "Content expanded successfully!")
+            else:
+                QMessageBox.warning(self, "AI Expand", "No expanded content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Expand Error", str(exc))
+
+    def summarize_ai_content(self):
+        """Summarize content using AI assistance."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        # Get context from current content
+        context_text = self._collect_language_text("en")
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Summarize", "Please add some content to summarize.")
+            return
+
+        # Ask for summary length
+        length, ok = QInputDialog.getItem(
+            self, "AI Summarize", "Summary length:",
+            ["short", "medium", "long"], 1, False
+        )
+        if not ok:
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "summarize",
+                    "content": context_text,
+                    "language": "en",
+                    "style": "academic",
+                    "length": length
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Summarize Error", response.error_message)
+                return
+
+            summary_text = response.content.strip()
+            if summary_text:
+                # Create a dialog to display the summary
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle("Content Summary")
+                dialog.setText(summary_text)
+                dialog.setIcon(QMessageBox.Icon.Information)
+                dialog.setTextInteractionFlags(dialog.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse)
+                
+                # Add buttons
+                dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                dialog.button(QMessageBox.StandardButton.Ok).setText("Insert Summary")
+                dialog.button(QMessageBox.StandardButton.Cancel).setText("Close")
+                
+                if dialog.exec() == QMessageBox.StandardButton.Ok:
+                    # Insert summary as a new block
+                    self.add_footnote_block_with_content({"en": summary_text})
+                    QMessageBox.information(self, "AI Summarize", "Summary inserted successfully!")
+            else:
+                QMessageBox.warning(self, "AI Summarize", "No summary content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Summarize Error", str(exc))
+
+    def ai_collaborate(self):
+        """Start collaborative writing session."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        context_text = self._collect_language_text("en")
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Collaborate", "Please add some content to collaborate on.")
+            return
+
+        prompt, ok = QInputDialog.getText(self, "AI Collaborate", "What would you like to collaborate on?")
+        if not ok or not prompt.strip():
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "collaborate",
+                    "content": context_text,
+                    "topic": prompt.strip(),
+                    "language": "en",
+                    "style": "academic",
+                    "conversation_history": []  # Could be extended to maintain conversation history
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Collaborate Error", response.error_message)
+                return
+
+            collaborative_text = response.content.strip()
+            if collaborative_text:
+                # Add as a new paragraph block
+                self.add_block_with_content("paragraph", {"en": collaborative_text})
+                QMessageBox.information(self, "AI Collaborate", "Collaborative content added!")
+            else:
+                QMessageBox.warning(self, "AI Collaborate", "No collaborative content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Collaborate Error", str(exc))
+
+    def ai_brainstorm(self):
+        """Start brainstorming session."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        context_text = self._collect_language_text("en")
+
+        topic, ok = QInputDialog.getText(self, "AI Brainstorm", "What topic would you like to brainstorm?")
+        if not ok or not topic.strip():
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "brainstorm",
+                    "content": context_text,
+                    "topic": topic.strip(),
+                    "language": "en",
+                    "style": "academic"
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Brainstorm Error", response.error_message)
+                return
+
+            brainstorm_text = response.content.strip()
+            if brainstorm_text:
+                # Add as a new paragraph block
+                self.add_block_with_content("paragraph", {"en": brainstorm_text})
+                QMessageBox.information(self, "AI Brainstorm", "Brainstorm content added!")
+            else:
+                QMessageBox.warning(self, "AI Brainstorm", "No brainstorm content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Brainstorm Error", str(exc))
+
+    def rewrite_ai_content(self):
+        """Rewrite content in a different style for different audiences."""
+        if self.content_agent is None:
+            QMessageBox.warning(self, "AI Features", "AI content features are not configured.")
+            return
+
+        if self.current_book_id is None:
+            QMessageBox.warning(self, "AI Features", "Please open or create a book first.")
+            return
+
+        # Get context from current content
+        context_text = self._collect_language_text("en")
+        if not context_text.strip():
+            QMessageBox.warning(self, "AI Rewrite", "Please add some content to rewrite.")
+            return
+
+        # Ask for target style/audience
+        target_style, ok = QInputDialog.getItem(
+            self, "AI Rewrite", "Target style/audience:",
+            ["academic", "casual", "formal", "journalistic", "blog", "children", "expert", "beginner", "marketing", "technical"], 0, True
+        )
+        if not ok:
+            return
+
+        try:
+            response = asyncio.run(self.content_agent.process(
+                {
+                    "task_type": "rewrite",
+                    "content": context_text,
+                    "language": "en",
+                    "style": "academic",  # Original style
+                    "target_style": target_style
+                },
+                AgentContext(language="en")
+            ))
+
+            if response.error_message:
+                QMessageBox.critical(self, "AI Rewrite Error", response.error_message)
+                return
+
+            rewritten_text = response.content.strip()
+            if rewritten_text:
+                # Create a dialog to display the rewritten content
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle(f"Rewritten Content ({target_style} style)")
+                dialog.setText(rewritten_text)
+                dialog.setIcon(QMessageBox.Icon.Information)
+                dialog.setTextInteractionFlags(dialog.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse)
+                
+                # Add buttons
+                dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                dialog.button(QMessageBox.StandardButton.Ok).setText("Replace Content")
+                dialog.button(QMessageBox.StandardButton.Cancel).setText("Close")
+                
+                if dialog.exec() == QMessageBox.StandardButton.Ok:
+                    # Replace the current content with rewritten version
+                    self._replace_language_text("en", rewritten_text)
+                    QMessageBox.information(self, "AI Rewrite", f"Content rewritten in {target_style} style!")
+            else:
+                QMessageBox.warning(self, "AI Rewrite", "No rewritten content was generated.")
+
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Rewrite Error", str(exc))
+
+    def add_footnote_block_with_content(self, content: Dict[str, str]):
+        """Add a footnote block with specific content."""
+        self.add_block("footnote", content)
+
+    def add_block_with_content(self, block_type: str, content: Dict[str, str]):
+        """Add a block with specific content."""
+        self.add_block(block_type, content)
+        parts = []
+        for block in self.blocks:
+            content = block.get_content().get(language_code, "")
+            if content.strip():
+                parts.append(content.strip())
+        return "\n\n".join(parts)
+
+    def _play_audio_file(self, file_path: str):
+        if not hasattr(self, "audio_player"):
+            self.audio_player = QMediaPlayer()
+            self.audio_output = QAudioOutput()
+            self.audio_player.setAudioOutput(self.audio_output)
+
+        self.audio_player.setSource(QUrl.fromLocalFile(file_path))
+        self.audio_player.play()
 
     def load_chapter(self, book_id: int, chapter_data: Dict[str, Any]):
         self._loading = True

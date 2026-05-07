@@ -7,7 +7,6 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root))
 
-# UI import moved to conditional import
 from infrastructure.config.app_config import load_config
 from infrastructure.database.manager import DatabaseManager
 from modules.export import PDFGenerator

@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 APP_NAME = "Maktaba-OS"
 
@@ -15,11 +16,15 @@ def project_root() -> Path:
     # Resolves from infrastructure/config/paths.py up to the root maktaba-os/
     return Path(__file__).resolve().parents[2]
 
+def _get_env_path(env_var: str) -> Optional[Path]:
+    """Helper to safely fetch and resolve paths from environment variables."""
+    override = os.environ.get(env_var)
+    return Path(override).expanduser().resolve() if override else None
+
 def user_data_dir() -> Path:
     """Return the base directory for storing user data (DBs, logs)."""
-    override = os.environ.get("MAKTABA_DATA_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
+    if override := _get_env_path("MAKTABA_DATA_DIR"):
+        return override
 
     if os.name == "nt":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -32,15 +37,13 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 def database_path() -> Path:
-    override = os.environ.get("MAKTABA_DB_PATH")
-    if override:
-        return Path(override).expanduser().resolve()
+    if override := _get_env_path("MAKTABA_DB_PATH"):
+        return override
     return ensure_dir(user_data_dir()) / "maktaba_store.db"
 
 def logs_dir() -> Path:
-    override = os.environ.get("MAKTABA_LOG_DIR")
-    if override:
-        return ensure_dir(Path(override).expanduser().resolve())
+    if override := _get_env_path("MAKTABA_LOG_DIR"):
+        return ensure_dir(override)
     return ensure_dir(user_data_dir() / "logs")
 
 def template_dir() -> Path:

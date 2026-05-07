@@ -8,11 +8,11 @@ from pathlib import Path
 import json
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QAction
+from PyQt6.QtGui import QKeySequence, QAction, QBrush, QColor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
-    QSlider, QTextEdit, QSplitter, QFrame, QProgressBar
+    QSlider, QSplitter, QFrame, QProgressBar, QListWidget, QListWidgetItem,
+    QAbstractItemView, QApplication
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -49,8 +49,11 @@ class SyncModeWidget(QWidget):
         self.audio_output = QAudioOutput()
         self.audio_player.setAudioOutput(self.audio_output)
 
+        self.current_audio_path: Optional[str] = None
         self.current_position = 0.0  # seconds
         self.timestamps: Dict[str, float] = {}  # word_id -> timestamp
+        self.word_nodes: list = []  # List of ordered word IDs
+        self.current_word_index = 0
 
         self.init_ui()
         self.setup_audio_player()
@@ -75,6 +78,10 @@ class SyncModeWidget(QWidget):
         self.load_audio_btn = QPushButton("Load Audio")
         self.load_audio_btn.clicked.connect(self.load_audio_file)
         header_layout.addWidget(self.load_audio_btn)
+
+        self.export_audio_btn = QPushButton("Export Normalized Audio")
+        self.export_audio_btn.clicked.connect(self.export_normalized_audio)
+        header_layout.addWidget(self.export_audio_btn)
 
         layout.addLayout(header_layout)
 
@@ -143,10 +150,11 @@ class SyncModeWidget(QWidget):
         text_label.setStyleSheet("font-weight: bold;")
         bottom_layout.addWidget(text_label)
 
-        self.text_display = QTextEdit()
-        self.text_display.setReadOnly(True)
-        self.text_display.setMinimumHeight(200)
-        bottom_layout.addWidget(self.text_display)
+        self.word_list = QListWidget()
+        self.word_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.word_list.setMinimumHeight(200)
+        self.word_list.setStyleSheet("QListWidget::item { padding: 5px; font-size: 14px; }")
+        bottom_layout.addWidget(self.word_list)
 
         # Timestamp controls
         timestamp_layout = QHBoxLayout()
@@ -199,12 +207,39 @@ class SyncModeWidget(QWidget):
             "Audio Files (*.mp3 *.wav *.ogg *.m4a);;All Files (*)"
         )
         if file_path:
+            self.current_audio_path = file_path
             url = QUrl.fromLocalFile(file_path)
             self.audio_player.setSource(url)
             self.status_label.setText(f"Loaded: {Path(file_path).name}")
             self.play_pause_btn.setText("Play")
             self.position_slider.setValue(0)
             self.time_label.setText("00:00 / 00:00")
+
+    def export_normalized_audio(self):
+        """Export the currently loaded audio, applying EBU R128 normalization."""
+        if not self.current_audio_path:
+            self.status_label.setText("No audio loaded to export.")
+            return
+
+        if not self.audio_processor.has_ffmpeg():
+            self.status_label.setText("Export failed: FFmpeg is required but not found on the system.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Normalized Audio",
+            "",
+            "Audio Files (*.wav *.mp3 *.ogg *.m4a);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self.status_label.setText("Normalizing audio... please wait.")
+                QApplication.processEvents()  # Force UI update before blocking task
+                
+                out_path = self.audio_processor.normalize_audio(self.current_audio_path, file_path)
+                self.status_label.setText(f"Successfully exported normalized audio to {out_path.name}")
+            except Exception as e:
+                self.status_label.setText(f"Failed to export audio: {str(e)}")
 
     def toggle_playback(self):
         """Toggle play/pause."""
@@ -258,12 +293,47 @@ class SyncModeWidget(QWidget):
 
     def mark_current_word(self):
         """Mark the current word with timestamp."""
-        # For now, just show current position
-        self.status_label.setText(f"Marked at {self.current_position:.2f}s")
+        if not self.word_nodes:
+            self.status_label.setText("No text loaded.")
+            return
+            
+        if self.current_word_index >= len(self.word_nodes):
+            self.status_label.setText("All words synchronized!")
+            return
+
+        node_id = self.word_nodes[self.current_word_index]
+        timestamp = self.current_position
+        self.timestamps[node_id] = timestamp
+        
+        # Update UI item visually
+        item = self.word_list.item(self.current_word_index)
+        time_str = self._format_time(int(timestamp * 1000))
+        base_text = item.text().split(" [")[0]
+        item.setText(f"{base_text} [{time_str}]")
+        item.setForeground(QBrush(QColor("#008000")))  # Highlight synced words in green
+        
+        # Move to next word
+        self.current_word_index += 1
+        if self.current_word_index < len(self.word_nodes):
+            self.word_list.setCurrentRow(self.current_word_index)
+            self.word_list.scrollToItem(self.word_list.item(self.current_word_index))
+            
+        self.status_label.setText(f"Marked word {self.current_word_index} at {timestamp:.2f}s")
 
     def clear_timestamps(self):
         """Clear all timestamps."""
         self.timestamps.clear()
+        self.current_word_index = 0
+        
+        for i in range(self.word_list.count()):
+            item = self.word_list.item(i)
+            base_text = item.text().split(" [")[0]
+            item.setText(base_text)
+            item.setForeground(QBrush())  # Reset color
+            
+        if self.word_list.count() > 0:
+            self.word_list.setCurrentRow(0)
+            
         self.status_label.setText("Timestamps cleared")
 
     def export_timestamps(self):
@@ -291,23 +361,40 @@ class SyncModeWidget(QWidget):
         if document and document.children:
             chapter = document.children[0]
             self.book_label.setText(f"Book: {chapter.title}")
-            # Load text content
-            text_content = self._extract_text_content(chapter)
-            self.text_display.setPlainText(text_content)
+            self._populate_word_list(chapter)
         else:
             self.book_label.setText("Failed to load book")
 
-    def _extract_text_content(self, chapter) -> str:
-        """Extract text content from chapter for display."""
-        lines = []
-        for block in chapter.children:
-            if hasattr(block, 'ar') and block.ar:
-                lines.append(f"AR: {block.ar}")
-            if hasattr(block, 'ur') and block.ur:
-                lines.append(f"UR: {block.ur}")
-            if hasattr(block, 'en') and block.en:
-                lines.append(f"EN: {block.en}")
-        return "\n".join(lines)
+    def _populate_word_list(self, chapter):
+        """Extract strictly typed word bundles and prepare the list view."""
+        self.word_list.clear()
+        self.word_nodes.clear()
+        self.timestamps.clear()
+        self.current_word_index = 0
+        
+        # Adhere to schema: interlinear_block -> content -> word_bundles
+        for block_idx, block in enumerate(chapter.children):
+            bundles = getattr(block, 'content', getattr(block, 'children', []))
+            
+            for bundle_idx, bundle in enumerate(bundles):
+                # Safely extract attributes regardless of whether model is dict or object
+                node_id = getattr(bundle, 'id', f"{block_idx}_{bundle_idx}")
+                
+                # Accommodate various schema versions (ar/ur/en vs l1/l2/l3)
+                ar = getattr(bundle, 'ar', getattr(bundle, 'l1', ''))
+                ur = getattr(bundle, 'ur', getattr(bundle, 'l2', ''))
+                en = getattr(bundle, 'en', getattr(bundle, 'l3', ''))
+                
+                display_text = " | ".join(filter(None, [ar, ur, en]))
+                
+                if display_text:
+                    item = QListWidgetItem(display_text)
+                    item.setData(Qt.ItemDataRole.UserRole, node_id)
+                    self.word_list.addItem(item)
+                    self.word_nodes.append(node_id)
+                    
+        if self.word_list.count() > 0:
+            self.word_list.setCurrentRow(0)
 
     def _format_time(self, ms: int) -> str:
         """Format milliseconds to MM:SS."""

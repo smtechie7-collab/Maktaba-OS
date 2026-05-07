@@ -3,7 +3,7 @@ Command Bus for routing commands to the appropriate handlers.
 Maintains separation between UI and core engine.
 """
 
-from typing import Dict, Type, Any, Optional, Optional
+from typing import Dict, Optional
 from queue import Queue, Empty
 import threading
 import time
@@ -71,31 +71,29 @@ class CommandBus:
         """Background thread for processing commands."""
         while self._running:
             try:
-                # Non-blocking queue get with timeout
-                if not self._command_queue.empty():
-                    item = self._command_queue.get_nowait()
-                    if item:
-                        command_id, command = item
-                        result = command.execute()
-
-                        # Call callback if registered
-                        if command_id in self._result_callbacks:
-                            try:
-                                self._result_callbacks[command_id](result)
-                            except Exception as e:
-                                print(f"Error in command callback: {e}")
-                            finally:
-                                del self._result_callbacks[command_id]
-
-                        self._command_queue.task_done()
-                else:
-                    time.sleep(0.1)  # Sleep briefly when queue is empty
-
+                command_id, command = self._command_queue.get(timeout=0.05)
+            except Empty:
+                continue
             except Exception as e:
-                print(f"Error processing command: {e}")
+                print(f"Error receiving command: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
+
+            try:
+                result = command.execute()
+            except Exception as e:
+                result = CommandResult(False, error_message=str(e))
+
+            if command_id in self._result_callbacks:
+                try:
+                    self._result_callbacks[command_id](result)
+                except Exception as e:
+                    print(f"Error in command callback: {e}")
+                finally:
+                    del self._result_callbacks[command_id]
+
+            self._command_queue.task_done()
 
     def get_queue_size(self) -> int:
         """Get the number of pending commands."""
